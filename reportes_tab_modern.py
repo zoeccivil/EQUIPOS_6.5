@@ -287,7 +287,7 @@ class ReportesTabModern(QWidget):
                 fm=self.fm,
                 operadores_mapa=self.operadores_mapa,
                 equipos_mapa=self.equipos_mapa,
-                clientes_mapa=self.clientes_mapa,
+                clientes_mapa=self.clientes_mapa,  # ← AGREGAR ESTA LÍNEA
                 proyecto_id=self.config.get('app', {}).get('proyecto_id', 8),
                 parent=self
             )

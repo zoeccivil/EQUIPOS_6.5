@@ -378,11 +378,12 @@ class ReportGenerator:
 
     def to_pdf_operadores(self, out_path: str):
         """
-        Genera el PDF en portrait para reporte de operadores con:
-        - Encabezado: título, nombre operador, periodo
-        - Tabla de Alquileres (Fecha | Equipo | Cliente | Horas | Monto)
-        - PageBreak + Tabla Pagos por Fecha (solo fechas con pagos)
-        - Tabla de Totales para operadores
+        Genera PDF Portrait para Reporte de Operadores con:
+        - Página(s) de Alquileres
+        - PageBreak
+        - Pagos por Fecha (solo fechas con pago > 0)
+        - Totales del operador
+        - Anexos (conduces) al final
         """
         try:
             import tempfile, os, shutil
@@ -391,190 +392,262 @@ class ReportGenerator:
             story = []
 
             title = getattr(self, "title", "REPORTE DE OPERADORES")
-            cliente = getattr(self, "cliente", "")
+            cliente = getattr(self, "cliente", "")  # nombre del operador
             date_range = getattr(self, "date_range", "")
-            currency = getattr(self, "currency_symbol", "RD$")
+            cs = getattr(self, "currency_symbol", "RD$")
             column_map = getattr(self, "column_map", {}) or {}
             data = list(getattr(self, "data", []) or [])
-            pagos_operador = list(getattr(self, "pagos_operador", []) or [])
-            total_horas = float(getattr(self, "total_horas", 0) or 0)
-            total_pagado = float(getattr(self, "total_pagado", 0) or 0)
-            total_facturado = float(getattr(self, "total_facturado", 0) or 0)
 
-            # ── SECCIÓN 1: Encabezado ──────────────────────────────────────────────
-            story.append(Paragraph(title, styles["Title"]))
+            page_w, page_h = LETTER  # Portrait
+            margin_l, margin_r = 40, 40
+            available_w = page_w - margin_l - margin_r
+
+            # ─── ENCABEZADO ───
+            style_title = ParagraphStyle(
+                "OpTitle", parent=styles["Title"], fontSize=16,
+                fontName="Helvetica-Bold", alignment=1  # CENTER
+            )
+            style_oper = ParagraphStyle(
+                "OpOperador", parent=styles["Normal"], fontSize=11,
+                fontName="Helvetica-BoldOblique", spaceAfter=2
+            )
+            story.append(Paragraph(title, style_title))
             if cliente:
-                op_style = ParagraphStyle("OpStyle", parent=styles["Heading3"],
-                                          fontName="Helvetica-BoldOblique")
-                story.append(Paragraph(f"Operador: {cliente}", op_style))
+                story.append(Paragraph(f"Operador: {cliente}", style_oper))
             if date_range:
                 story.append(Paragraph(f"Periodo: {date_range}", styles["Normal"]))
-            story.append(Spacer(1, 10))
+            story.append(Spacer(1, 12))
 
-            # ── SECCIÓN 2: Tabla de Alquileres ─────────────────────────────────────
-            story.append(Paragraph("Alquileres", styles["Heading3"]))
-
-            page_w, page_h = LETTER
-            left_margin = right_margin = 40
-            available_w = page_w - left_margin - right_margin
+            # ─── TABLA ALQUILERES ───
+            story.append(Paragraph("<b><i>Alquileres</i></b>", styles["Heading3"]))
 
             if column_map and data:
                 keys = list(column_map.keys())
                 headers = [column_map[k] for k in keys]
 
-                col_widths = self._auto_compute_col_widths(
-                    column_map, data, page_w, margins=(left_margin, right_margin)
-                )
-                # Expand to fill available width
-                total_w = sum(col_widths)
-                if total_w < available_w and total_w > 0:
-                    scale = available_w / total_w
-                    col_widths = [w * scale for w in col_widths]
+                # Calcular anchos proporcionales para Portrait
+                proportions = {
+                    "fecha": 0.15, "equipo_nombre": 0.28, "cliente_nombre": 0.25,
+                    "horas": 0.12, "monto": 0.20,
+                }
+                col_widths = [available_w * proportions.get(k, 0.15) for k in keys]
 
-                rows = self._rows_with_wrapping(column_map, data, font_size=9)
+                # Construir filas
+                rows = []
+                for r in data:
+                    row_cells = []
+                    for k in keys:
+                        val = r.get(k, "")
+                        if k == "horas" and val not in ("", None):
+                            try: val = f"{float(val):,.2f}"
+                            except: pass
+                        elif k == "monto" and val not in ("", None):
+                            try: val = f"{cs} {float(val):,.2f}"
+                            except: pass
+                        # Wrap para columnas de texto largo
+                        if k in ("equipo_nombre", "cliente_nombre"):
+                            style_cell = ParagraphStyle(
+                                "CellWrap", parent=styles["BodyText"],
+                                fontSize=8, leading=10, fontName="Helvetica"
+                            )
+                            row_cells.append(Paragraph(escape(str(val or "")), style_cell))
+                        else:
+                            row_cells.append(str(val or ""))
+                    rows.append(row_cells)
+
+                tbl = Table([headers] + rows, hAlign="CENTER",
+                            colWidths=col_widths, repeatRows=1)
+
                 num_cols = [i for i, k in enumerate(keys) if k in ("horas", "monto")]
-
-                alq_tbl = Table(
-                    [headers] + rows,
-                    hAlign="CENTER",
-                    colWidths=col_widths,
-                    repeatRows=1,
-                )
                 ts = [
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
                     ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#1F7A1F")),
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                     [colors.white, colors.HexColor("#F9FBF9")]),
                 ]
                 for idx in num_cols:
                     ts.append(("ALIGN", (idx, 1), (idx, -1), "RIGHT"))
-                alq_tbl.setStyle(TableStyle(ts))
-                story.append(alq_tbl)
+                tbl.setStyle(TableStyle(ts))
+                story.append(tbl)
             else:
                 story.append(Paragraph("Sin datos de alquileres.", styles["Normal"]))
 
-            # ── SECCIÓN 3: Pagos por Fecha ─────────────────────────────────────────
+            # ─── PAGE BREAK ───
             story.append(PageBreak())
-            story.append(Paragraph("Pagos por Fecha", styles["Heading3"]))
 
-            # Agrupar pagos por fecha (solo fechas con pago > 0)
-            pagos_por_fecha = {}
-            for pago in pagos_operador:
-                fecha = pago.get("fecha")
+            # ─── PAGOS POR FECHA ───
+            story.append(Paragraph("<b><i>Pagos por Fecha</i></b>", styles["Heading3"]))
+
+            pagos_op = getattr(self, "pagos_operador", []) or []
+
+            # Agrupar pagos por fecha (campo "horas" del pago, NO "horas_pagadas")
+            pagos_agrup = {}
+            for p in pagos_op:
+                fecha = p.get("fecha", "")
                 if not fecha:
                     continue
-                monto = float(pago.get("monto", 0) or 0)
-                horas_p = float(pago.get("horas_pagadas", 0) or 0)
-                if fecha not in pagos_por_fecha:
-                    pagos_por_fecha[fecha] = {"monto": 0.0, "horas_pagadas": 0.0}
-                pagos_por_fecha[fecha]["monto"] += monto
-                pagos_por_fecha[fecha]["horas_pagadas"] += horas_p
+                monto_p = float(p.get("monto", 0) or 0)
+                horas_p = float(p.get("horas", 0) or 0)  # ← "horas", como lo guarda pago_operador_dialog
+                if fecha not in pagos_agrup:
+                    pagos_agrup[fecha] = {"monto": 0.0, "horas": 0.0}
+                pagos_agrup[fecha]["monto"] += monto_p
+                pagos_agrup[fecha]["horas"] += horas_p
 
-            # Filter out dates with no payment
-            pagos_por_fecha = {f: v for f, v in pagos_por_fecha.items() if v["monto"] > 0}
+            # Solo fechas con pago > 0
+            fechas_con_pago = sorted(
+                [f for f, v in pagos_agrup.items() if v["monto"] > 0]
+            )
 
-            pagos_headers = ["Fecha", "Total Pagado", "Horas Pagadas", "Precio Promedio/Hora"]
-            pagos_rows = []
-            for fecha in sorted(pagos_por_fecha.keys()):
-                v = pagos_por_fecha[fecha]
-                monto_f = v["monto"]
-                horas_f = v["horas_pagadas"]
-                if horas_f > 0:
-                    precio_promedio = f"{currency} {monto_f / horas_f:,.2f}"
-                else:
-                    precio_promedio = "N/A"
-                pagos_rows.append([
-                    fecha,
-                    f"{currency} {monto_f:,.2f}",
-                    f"{horas_f:,.2f}",
-                    precio_promedio,
-                ])
+            if fechas_con_pago:
+                pag_headers = ["Fecha", "Total Pagado", "Horas Pagadas", "Precio Promedio/Hora"]
+                pag_widths = [available_w * 0.22, available_w * 0.28,
+                              available_w * 0.22, available_w * 0.28]
+                pag_rows = []
+                for f in fechas_con_pago:
+                    m = pagos_agrup[f]["monto"]
+                    h = pagos_agrup[f]["horas"]
+                    precio_prom = f"{cs} {(m / h):,.2f}" if h > 0 else "N/A"
+                    pag_rows.append([
+                        f,
+                        f"{cs} {m:,.2f}",
+                        f"{h:,.2f} h",
+                        precio_prom,
+                    ])
 
-            n_pcols = len(pagos_headers)
-            pago_col_w = available_w / n_pcols
-            pagos_col_widths = [pago_col_w] * n_pcols
-
-            if pagos_rows:
-                pagos_tbl = Table(
-                    [pagos_headers] + pagos_rows,
-                    hAlign="CENTER",
-                    colWidths=pagos_col_widths,
-                    repeatRows=1,
-                )
-                pagos_tbl.setStyle(TableStyle([
+                tbl_pagos = Table([pag_headers] + pag_rows,
+                                  hAlign="CENTER", colWidths=pag_widths)
+                tbl_pagos.setStyle(TableStyle([
                     ("FONTSIZE", (0, 0), (-1, -1), 9),
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFF1E0")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#A35D00")),
                     ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#A35D00")),
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
                     ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                     [colors.white, colors.HexColor("#FFFAF5")]),
                 ]))
-                story.append(pagos_tbl)
+                story.append(tbl_pagos)
             else:
-                story.append(Paragraph("Sin pagos registrados en el periodo.", styles["Normal"]))
+                story.append(Paragraph("No se registraron pagos en este período.",
+                                       styles["Normal"]))
 
-            story.append(Spacer(1, 18))
+            story.append(Spacer(1, 20))
 
-            # ── SECCIÓN 4: Tabla de Totales ────────────────────────────────────────
+            # ─── TOTALES ───
+            total_pagado = float(getattr(self, "total_pagado", 0) or 0)
+            total_horas_trab = float(getattr(self, "total_horas", 0) or 0)
+
+            # Horas pagadas = sum de "horas" de todos los pagos
             total_horas_pagadas = sum(
-                float(p.get("horas_pagadas", 0) or 0) for p in pagos_operador
+                float(p.get("horas", 0) or 0) for p in pagos_op
             )
-            saldo_pendiente = total_facturado - total_pagado
-            if total_horas_pagadas > 0:
-                precio_prom_hora = f"{currency} {total_pagado / total_horas_pagadas:,.2f}"
-            else:
-                precio_prom_hora = "N/A"
 
-            saldo_color = colors.HexColor("#D32F2F") if saldo_pendiente > 0 else colors.HexColor("#2E7D32")
+            # Precio promedio por hora = Total Pagado / Horas Pagadas
+            if total_horas_pagadas > 0:
+                precio_prom_hora = total_pagado / total_horas_pagadas
+                precio_prom_txt = f"{cs} {precio_prom_hora:,.2f}"
+            else:
+                precio_prom_hora = 0.0
+                precio_prom_txt = "N/A"
+
+            # SALDO = Total Pagado - (Horas Trabajadas s/Conduce × Precio Promedio/Hora)
+            if precio_prom_hora > 0:
+                costo_horas_reales = total_horas_trab * precio_prom_hora
+                saldo = total_pagado - costo_horas_reales
+            else:
+                saldo = total_pagado
+
+            # Color del saldo: verde si >= 0 (a favor), rojo si < 0 (debes)
+            if saldo >= 0:
+                saldo_color = colors.HexColor("#2E7D32")
+                saldo_bg = colors.HexColor("#E8F5E9")
+            else:
+                saldo_color = colors.HexColor("#D32F2F")
+                saldo_bg = colors.HexColor("#FFF4CC")
 
             tot_data = [
                 ["Concepto", "Valor"],
-                ["Total Pagado:", f"{currency} {total_pagado:,.2f}"],
-                ["Precio Promedio por Hora:", precio_prom_hora],
-                [f"Horas Trabajadas (s/Conduce):", f"{total_horas:,.2f} h"],
+                ["Total Pagado:", f"{cs} {total_pagado:,.2f}"],
+                ["Precio Promedio por Hora:", precio_prom_txt],
+                ["Horas Trabajadas (s/Conduce):", f"{total_horas_trab:,.2f} h"],
                 ["Horas Pagadas (s/Pagos):", f"{total_horas_pagadas:,.2f} h"],
-                ["Saldo Pendiente:", f"{currency} {saldo_pendiente:,.2f}"],
+                ["Saldo Pendiente:", f"{cs} {saldo:,.2f}"],
             ]
-            tot_col_w = available_w / 2
-            tot_tbl = Table(tot_data, hAlign="CENTER", colWidths=[tot_col_w, tot_col_w])
-            tot_style = [
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
+
+            tot_widths = [available_w * 0.55, available_w * 0.45]
+            tbl_tot = Table(tot_data, hAlign="CENTER", colWidths=tot_widths)
+
+            ts_tot = [
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2A5ADF")),
-                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
                 ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                # Saldo row color
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                # Destacar saldo
+                ("BACKGROUND", (0, -1), (-1, -1), saldo_bg),
                 ("TEXTCOLOR", (0, -1), (-1, -1), saldo_color),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
             ]
-            tot_tbl.setStyle(TableStyle(tot_style))
-            story.append(tot_tbl)
+            tbl_tot.setStyle(TableStyle(ts_tot))
+            story.append(tbl_tot)
 
-            # ── Build PDF (portrait LETTER) ───────────────────────────────────────
+            # ─── CONSTRUIR PDF TEMPORAL ───
+            tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp_main_path = tmp_main.name
+            tmp_main.close()
+
             doc = SimpleDocTemplate(
-                out_path,
-                pagesize=LETTER,
-                leftMargin=left_margin,
-                rightMargin=right_margin,
-                topMargin=40,
-                bottomMargin=40,
+                tmp_main_path,
+                pagesize=LETTER,  # ← Portrait
+                leftMargin=margin_l, rightMargin=margin_r,
+                topMargin=40, bottomMargin=40
             )
             doc.build(story)
+
+            # ─── ANEXOS (CONDUCES) ───
+            anexos = self._collect_conduces_to_attach()
+            if not anexos:
+                shutil.move(tmp_main_path, out_path)
+                return True, None
+
+            annex_pdf_paths = []
+            for a in anexos:
+                if a["type"] == "pdf":
+                    annex_pdf_paths.append(a["path"])
+                else:
+                    page_pdf = self._image_to_pdf_page(a["path"], a["label"])
+                    if page_pdf:
+                        annex_pdf_paths.append(page_pdf)
+
+            ok, err = self._merge_main_with_annexes(tmp_main_path, annex_pdf_paths, out_path)
+            if not ok:
+                shutil.move(tmp_main_path, out_path)
+                return False, f"No se pudieron anexar algunos conduces: {err}"
+
+            try:
+                self._limpiar_temp_files()
+            except Exception:
+                pass
+
             return True, None
 
         except Exception as e:
             import traceback
+            print("to_pdf_operadores error:", e)
             traceback.print_exc()
             return False, str(e)
-
+        
+        
     def _agregar_anexos_conduces(self, elementos, estilos):
         """
         Agrega una sección de anexos con las imágenes de los conduces.
