@@ -375,6 +375,168 @@ class ReportGenerator:
             print("to_pdf error:", e)
             traceback.print_exc()
             return False, str(e) 
+
+    def to_pdf_operadores(self, out_path: str):
+        """
+        Genera el PDF de reporte de operadores con:
+        - Página(s) de Alquileres (tabla con encabezado repetido).
+        - PageBreak.
+        - Página de Pagos por fecha + Totales.
+        - Anexos (conduces) al final.
+        """
+        try:
+            import tempfile, os
+
+            styles = getSampleStyleSheet()
+            story = []
+
+            # Datos base
+            title = getattr(self, "title", "REPORTE DE OPERADORES")
+            cliente = getattr(self, "cliente", "")
+            date_range = getattr(self, "date_range", "")
+            self.currency_symbol = getattr(self, "currency_symbol", "RD$")
+            column_map = getattr(self, "column_map", {}) or {}
+            data = list(getattr(self, "data", []) or [])
+
+            # Encabezado principal
+            story.append(Paragraph(title, styles["Title"]))
+            if cliente:
+                story.append(Paragraph(f"Operador: {cliente}", styles["Heading3"]))
+            if date_range:
+                story.append(Paragraph(f"Periodo: {date_range}", styles["Normal"]))
+            story.append(Spacer(1, 10))
+
+            # Si no hay column_map pero hay datos, generar uno básico
+            if not column_map and data and isinstance(data[0], dict):
+                column_map = {k: k.capitalize() for k in data[0].keys()}
+
+            # Tabla Alquileres (puede paginar automáticamente)
+            story.append(Paragraph("Alquileres", styles["Heading3"]))
+            facturas_tbl = self._build_facturas_table(column_map, data, font_size=9)
+            story.append(facturas_tbl)
+
+            # Page break para iniciar sección de pagos en página nueva
+            story.append(PageBreak())
+
+            # Pagos por fecha
+            pagos_operador = list(getattr(self, "pagos_operador", None) or [])
+
+            # Agrupar pagos por fecha
+            pagos_agrupados = {}
+            for p in pagos_operador:
+                fecha = p.get("fecha", "")
+                if not fecha:
+                    continue
+                monto = float(p.get("monto", 0) or 0)
+                pagos_agrupados[fecha] = pagos_agrupados.get(fecha, 0.0) + monto
+
+            # Agrupar horas por fecha (de alquileres)
+            horas_por_fecha = {}
+            for a in data:
+                fecha = a.get("fecha", "")
+                if not fecha:
+                    continue
+                horas = float(a.get("horas", 0) or 0)
+                horas_por_fecha[fecha] = horas_por_fecha.get(fecha, 0.0) + horas
+
+            # Construir tabla combinada
+            todas_fechas = sorted(set(list(pagos_agrupados.keys()) + list(horas_por_fecha.keys())))
+            table_data = [["Fecha", "Total Pagado", "Total Horas"]]
+            for fecha in todas_fechas:
+                monto = pagos_agrupados.get(fecha, 0.0)
+                horas = horas_por_fecha.get(fecha, 0.0)
+                table_data.append([
+                    fecha,
+                    f"{self.currency_symbol} {monto:,.2f}",
+                    f"{horas:,.2f}",
+                ])
+
+            story.append(Paragraph("Pagos por Fecha", styles["Heading3"]))
+            pagos_tbl = Table(table_data, hAlign="LEFT")
+            pagos_tbl.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFF1E0")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#A35D00")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#F59E0B")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FFFBF5")]),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ]))
+            story.append(pagos_tbl)
+            story.append(Spacer(1, 18))
+
+            # Totales
+            total_facturado = float(getattr(self, "total_facturado", 0) or 0)
+            total_pagado = sum(pagos_agrupados.values()) if pagos_agrupados else float(getattr(self, "total_abonado", 0) or 0)
+            total_horas = sum(horas_por_fecha.values()) if horas_por_fecha else float(getattr(self, "total_horas", 0) or 0)
+            saldo = total_facturado - total_pagado
+
+            tot_headers = ["Total Facturado", "Total Pago", "Saldo", "Total Horas"]
+            tot_values = [
+                f"{self.currency_symbol} {total_facturado:,.2f}",
+                f"{self.currency_symbol} {total_pagado:,.2f}",
+                f"{self.currency_symbol} {saldo:,.2f}",
+                f"{total_horas:,.2f} h",
+            ]
+            tot_tbl = Table([tot_headers, tot_values], hAlign="RIGHT", colWidths=[130, 130, 130, 120])
+            tot_tbl.setStyle(TableStyle([
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2A5ADF")),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (0, 1), (-1, 1), "RIGHT"),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ]))
+            story.append(tot_tbl)
+
+            # Construir PDF principal temporal (landscape)
+            tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp_main_path = tmp_main.name
+            tmp_main.close()
+
+            doc = SimpleDocTemplate(
+                tmp_main_path,
+                pagesize=landscape(LETTER),
+                leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36
+            )
+            doc.build(story)
+
+            # Anexos (conduces)
+            import shutil
+
+            anexos = self._collect_conduces_to_attach()
+            if not anexos:
+                shutil.move(tmp_main_path, out_path)
+                return True, None
+
+            annex_pdf_paths = []
+            for a in anexos:
+                if a["type"] == "pdf":
+                    annex_pdf_paths.append(a["path"])
+                else:
+                    page_pdf = self._image_to_pdf_page(a["path"], a["label"])
+                    if page_pdf:
+                        annex_pdf_paths.append(page_pdf)
+
+            ok, err = self._merge_main_with_annexes(tmp_main_path, annex_pdf_paths, out_path)
+            if not ok:
+                shutil.move(tmp_main_path, out_path)
+                return False, f"No se pudieron anexar algunos conduces: {err}"
+
+            try:
+                self._limpiar_temp_files()
+            except Exception:
+                pass
+
+            return True, None
+
+        except Exception as e:
+            import traceback
+            print("to_pdf_operadores error:", e)
+            traceback.print_exc()
+            return False, str(e)
+
  
     def _agregar_anexos_conduces(self, elementos, estilos):
         """

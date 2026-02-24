@@ -257,11 +257,13 @@ class DialogoReporteOperadoresFirebase(QDialog):
 
             # Obtener pagos a operadores
             try:
-                pagos = self.fm.obtener_pagos_operadores(
-                    operador_id=operador_id,
-                    fecha_inicio=fecha_inicio,
-                    fecha_fin=fecha_fin
-                ) or []
+                filtros_pagos = {
+                    "fecha_inicio": fecha_inicio,
+                    "fecha_fin": fecha_fin,
+                }
+                if operador_id:
+                    filtros_pagos["operador_id"] = operador_id
+                pagos = self.fm.obtener_pagos_operadores(filtros_pagos) or []
             except Exception as e:
                 logger.warning(f"No se pudieron obtener pagos: {e}")
                 pagos = []
@@ -309,10 +311,10 @@ class DialogoReporteOperadoresFirebase(QDialog):
 
             # Agregar datos custom para operadores
             rg.total_horas = total_horas
-            rg.pagos = pagos
+            rg.pagos_operador = pagos
 
             # Generar PDF
-            exito, error = rg.to_pdf(file_path)
+            exito, error = rg.to_pdf_operadores(file_path)
 
             if exito:
                 QMessageBox.information(
