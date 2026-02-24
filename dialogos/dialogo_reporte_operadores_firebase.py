@@ -26,6 +26,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
         fm: FirebaseManager,
         operadores_mapa: dict,
         equipos_mapa: dict,
+        clientes_mapa: dict = None,
         proyecto_id=None,
         parent=None,
     ):
@@ -37,6 +38,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
 
         self.operadores_mapa = operadores_mapa or {}
         self.equipos_mapa = equipos_mapa or {}
+        self.clientes_mapa = clientes_mapa or {}
 
         # Aplicar tema consistente
         self.setStyleSheet("""
@@ -253,15 +255,17 @@ class DialogoReporteOperadoresFirebase(QDialog):
                 
                 alq["operador_nombre"] = self.operadores_mapa.get(oid, f"ID:{oid}")
                 alq["equipo_nombre"] = self.equipos_mapa.get(eid, f"ID:{eid}")
-                alq["cliente_nombre"] = f"Cliente {cid}"  # Puedes mejorarlo si tienes clientes_mapa
+                alq["cliente_nombre"] = self.clientes_mapa.get(cid, f"ID:{cid}")
 
             # Obtener pagos a operadores
             try:
-                pagos = self.fm.obtener_pagos_operadores(
-                    operador_id=operador_id,
-                    fecha_inicio=fecha_inicio,
-                    fecha_fin=fecha_fin
-                ) or []
+                filtros_pagos = {
+                    "fecha_inicio": fecha_inicio,
+                    "fecha_fin": fecha_fin,
+                }
+                if operador_id:
+                    filtros_pagos["operador_id"] = operador_id
+                pagos = self.fm.obtener_pagos_operadores(filtros_pagos) or []
             except Exception as e:
                 logger.warning(f"No se pudieron obtener pagos: {e}")
                 pagos = []
@@ -302,17 +306,14 @@ class DialogoReporteOperadoresFirebase(QDialog):
                 column_map=column_map
             )
 
-            # Agregar resumen de operadores al final
-            rg.total_facturado = total_facturado
-            rg.total_abonado = total_pagado
-            rg.saldo = total_facturado - total_pagado
-
-            # Agregar datos custom para operadores
+            # Datos para el reporte de operadores
+            rg.pagos_operador = pagos  # Lista de dicts con 'fecha', 'monto', 'horas_pagadas'
             rg.total_horas = total_horas
-            rg.pagos = pagos
+            rg.total_pagado = total_pagado
+            rg.total_facturado = total_facturado
 
-            # Generar PDF
-            exito, error = rg.to_pdf(file_path)
+            # Generar PDF usando el nuevo método dedicado para operadores
+            exito, error = rg.to_pdf_operadores(file_path)
 
             if exito:
                 QMessageBox.information(
