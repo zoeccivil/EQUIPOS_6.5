@@ -374,8 +374,155 @@ class ReportGenerator:
             import traceback
             print("to_pdf error:", e)
             traceback.print_exc()
-            return False, str(e) 
- 
+            return False, str(e)
+
+    def to_pdf_operadores(self, out_path: str):
+        """
+        Genera el PDF en Portrait (LETTER vertical) para el reporte de operadores.
+        Secciones:
+          1. Tabla de facturas (Fecha, Equipo, Cliente, Horas, Monto).
+          2. PageBreak → "Pagos por Fecha" (Fecha, Total Pagado, Total Horas).
+          3. Tabla de Totales (Total Pago, Total Trabajado, Total Horas, Saldo Pendiente).
+          4. Anexos (conduces) al final, igual que to_pdf().
+        Los datos de pagos se leen de self.pagos_operador (lista de dicts con
+        'fecha', 'monto', 'horas').
+        """
+        try:
+            import tempfile, os, shutil
+
+            styles = getSampleStyleSheet()
+            story = []
+
+            title = getattr(self, "title", "REPORTE DE OPERADORES")
+            cliente = getattr(self, "cliente", "")
+            date_range = getattr(self, "date_range", "")
+            self.currency_symbol = getattr(self, "currency_symbol", "RD$")
+            column_map = getattr(self, "column_map", {}) or {}
+            data = list(getattr(self, "data", []) or [])
+
+            # Encabezado
+            story.append(Paragraph(title, styles["Title"]))
+            if cliente:
+                story.append(Paragraph(f"Operador: {cliente}", styles["Heading3"]))
+            if date_range:
+                story.append(Paragraph(f"Periodo: {date_range}", styles["Normal"]))
+            story.append(Spacer(1, 10))
+
+            if not column_map and data and isinstance(data[0], dict):
+                column_map = {k: k.capitalize() for k in data[0].keys()}
+
+            # Tabla de facturas en Portrait
+            story.append(Paragraph("Facturas", styles["Heading3"]))
+            facturas_tbl = self._build_facturas_table(
+                column_map, data, font_size=9, page_w=LETTER[0]
+            )
+            story.append(facturas_tbl)
+
+            # PageBreak antes de sección de pagos
+            story.append(PageBreak())
+
+            # Sección "Pagos por Fecha"
+            pagos_operador = list(getattr(self, "pagos_operador", []) or [])
+
+            story.append(Paragraph("Pagos por Fecha", styles["Heading3"]))
+            pagos_headers = ["Fecha", "Total Pagado", "Total Horas"]
+            pagos_rows = [pagos_headers]
+            total_pagado_sum = 0.0
+            total_horas_pagos_sum = 0.0
+            for p in pagos_operador:
+                fecha_p = str(p.get("fecha", ""))
+                monto_p = float(p.get("monto", 0) or 0)
+                horas_p = float(p.get("horas", 0) or 0)
+                total_pagado_sum += monto_p
+                total_horas_pagos_sum += horas_p
+                pagos_rows.append([
+                    fecha_p,
+                    f"{self.currency_symbol} {monto_p:,.2f}",
+                    f"{horas_p:,.2f}",
+                ])
+
+            pagos_tbl = Table(pagos_rows, hAlign="LEFT", colWidths=[70, 120, 90])
+            pagos_tbl.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFF1E0")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#A35D00")),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#A35D00")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (2, -1), "RIGHT"),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ]))
+            story.append(pagos_tbl)
+            story.append(Spacer(1, 18))
+
+            # Tabla de Totales
+            total_facturado = float(getattr(self, "total_facturado", 0) or 0)
+            total_horas = float(getattr(self, "total_horas", 0) or 0)
+            saldo = total_facturado - total_pagado_sum
+
+            tot_headers = ["Total Pago", "Total Trabajado", "Total Horas", "Saldo Pendiente"]
+            tot_values = [
+                f"{self.currency_symbol} {total_pagado_sum:,.2f}",
+                f"{self.currency_symbol} {total_facturado:,.2f}",
+                f"{total_horas:,.2f}",
+                f"{self.currency_symbol} {saldo:,.2f}",
+            ]
+            tot_tbl = Table([tot_headers, tot_values], hAlign="RIGHT", colWidths=[110, 120, 90, 120])
+            tot_tbl.setStyle(TableStyle([
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2A5ADF")),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ALIGN", (0, 1), (-1, 1), "RIGHT"),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+            ]))
+            story.append(tot_tbl)
+
+            # Construir PDF principal temporal (Portrait)
+            tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp_main_path = tmp_main.name
+            tmp_main.close()
+
+            doc = SimpleDocTemplate(
+                tmp_main_path,
+                pagesize=LETTER,
+                leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36
+            )
+            doc.build(story)
+
+            # Anexos (conduces) — igual que to_pdf()
+            anexos = self._collect_conduces_to_attach()
+            if not anexos:
+                shutil.move(tmp_main_path, out_path)
+                return True, None
+
+            annex_pdf_paths = []
+            for a in anexos:
+                if a["type"] == "pdf":
+                    annex_pdf_paths.append(a["path"])
+                else:
+                    page_pdf = self._image_to_pdf_page(a["path"], a["label"])
+                    if page_pdf:
+                        annex_pdf_paths.append(page_pdf)
+
+            ok, err = self._merge_main_with_annexes(tmp_main_path, annex_pdf_paths, out_path)
+            if not ok:
+                shutil.move(tmp_main_path, out_path)
+                return False, f"No se pudieron anexar algunos conduces: {err}"
+
+            try:
+                self._limpiar_temp_files()
+            except Exception:
+                pass
+
+            return True, None
+
+        except Exception as e:
+            import traceback
+            print("to_pdf_operadores error:", e)
+            traceback.print_exc()
+            return False, str(e)
+
     def _agregar_anexos_conduces(self, elementos, estilos):
         """
         Agrega una sección de anexos con las imágenes de los conduces.
@@ -504,7 +651,7 @@ class ReportGenerator:
                     abonos_data.append([
                         str(fecha),
                         str(concepto),
-                        f"{self.currency} {monto:,.2f}"
+                        f"{self.currency_symbol} {monto:,.2f}"
                     ])
                 
                 abonos_tabla = Table(abonos_data, colWidths=[40*mm, 90*mm, 50*mm])
@@ -544,9 +691,9 @@ class ReportGenerator:
             
             # Tabla de totales
             totales_data = [
-                ['Total Facturado:', f"{self.currency} {self.total_facturado:,.2f}"],
-                ['Total Abonado:', f"{self.currency} {self.total_abonado:,.2f}"],
-                ['Saldo Pendiente:', f"{self.currency} {self.saldo:,.2f}"]
+                ['Total Facturado:', f"{self.currency_symbol} {self.total_facturado:,.2f}"],
+                ['Total Abonado:', f"{self.currency_symbol} {self.total_abonado:,.2f}"],
+                ['Saldo Pendiente:', f"{self.currency_symbol} {self.saldo:,.2f}"]
             ]
             
             totales_tabla = Table(totales_data, colWidths=[70*mm, 70*mm])
