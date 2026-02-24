@@ -1,0 +1,31 @@
+{
+  "app": {
+    "nombre": "ZOEC EQUIPOS",
+    "version": "2.0.0",
+    "moneda": "RD$"
+  },
+  "firebase": {
+    "credentials_path": "path/to/firebase-credentials.json",
+    "project_id": "tu-project-id"
+  },
+  "whatsapp": {
+    "provider": "twilio",
+    "twilio_account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "twilio_auth_token": "tu_auth_token_aqui",
+    "twilio_from": "+14155238886",
+    "api_token": "",
+    "phone_id": "",
+    "recordatorios_auto": {
+      "activo": false,
+      "dias_antes": 3,
+      "hora": "09:00"
+    }
+  },
+  "reportes": {
+    "logo_path": "assets/logo.png",
+    "empresa": "ZOEC CIVIL",
+    "direccion": "Tu dirección aquí",
+    "telefono": "+1 (809) 555-1234",
+    "email": "info@zoeccivil.com"
+  }
+}

@@ -1,0 +1,669 @@
+ejemplo HTML
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EQUIPOS 6.0 - Diseño Industrial Light</title>
+    <!-- Iconos de Material Design -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <style>
+        /* --- PALETA DE COLORES "TIERRA & ASFALTO" --- */
+        :root {
+            /* Estructura */
+            --bg-body: #F3F4F6;        /* Gris muy claro (Concreto limpio) */
+            --bg-sidebar: #1F2937;     /* Asfalto oscuro */
+            --bg-card: #FFFFFF;        /* Blanco puro */
+            --border-color: #E5E7EB;   /* Bordes sutiles */
+            
+            /* Acentos (Maquinaria) */
+            --primary: #F59E0B;        /* Amarillo Caterpillar / Ambar */
+            --primary-hover: #D97706;  
+            --primary-text: #78350F;   /* Texto oscuro sobre amarillo */
+            
+            --secondary: #3B82F6;      /* Azul Ingeniero (para información) */
+            
+            /* Texto */
+            --text-main: #111827;      /* Negro casi puro */
+            --text-muted: #6B7280;     /* Gris medio */
+            --text-on-dark: #F9FAFB;   /* Blanco para sidebar */
+            
+            /* Estados */
+            --success-bg: #DCFCE7; --success-text: #166534; /* Verde suave */
+            --danger-bg: #FEE2E2; --danger-text: #991B1B;   /* Rojo suave */
+            --warning-bg: #FEF3C7; --warning-text: #92400E; /* Amarillo suave */
+            
+            --font-stack: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: #e5e5e5; /* Fondo detrás de la ventana */
+            font-family: var(--font-stack);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: var(--text-main);
+        }
+
+        /* Simulación de Ventana de Escritorio */
+        .app-window {
+            width: 1400px;
+            height: 850px;
+            background-color: var(--bg-body);
+            border-radius: 12px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* --- SIDEBAR --- */
+        .sidebar {
+            width: 260px;
+            background-color: var(--bg-sidebar);
+            color: var(--text-on-dark);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 30px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .brand-icon {
+            background-color: var(--primary);
+            color: var(--primary-text);
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 20px;
+        }
+
+        .brand-text h1 { font-size: 18px; font-weight: 800; letter-spacing: 0.5px; }
+        .brand-text p { font-size: 11px; color: #9CA3AF; text-transform: uppercase; }
+
+        .nav-menu { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+
+        .nav-btn {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: none;
+            background: transparent;
+            color: #D1D5DB;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: left;
+        }
+
+        .nav-btn:hover { background-color: rgba(255,255,255,0.05); color: white; }
+        
+        .nav-btn.active {
+            background-color: var(--primary);
+            color: var(--primary-text);
+            font-weight: 700;
+            box-shadow: 0 4px 6px -1px rgba(245, 158, 11, 0.3);
+        }
+        
+        .nav-btn .material-icons-round { font-size: 20px; }
+
+        /* --- MAIN CONTENT --- */
+        .main-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            height: 70px;
+            background-color: var(--bg-card);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 32px;
+        }
+
+        .page-title { font-size: 20px; font-weight: 700; color: var(--text-main); }
+
+        .search-bar {
+            display: flex;
+            align-items: center;
+            background: var(--bg-body);
+            padding: 8px 16px;
+            border-radius: 8px;
+            width: 300px;
+            color: var(--text-muted);
+            border: 1px solid transparent;
+        }
+        .search-bar:focus-within {
+            border-color: var(--primary);
+            background: #fff;
+        }
+        .search-bar input {
+            border: none;
+            background: transparent;
+            outline: none;
+            margin-left: 10px;
+            width: 100%;
+            font-size: 14px;
+        }
+
+        /* Content Scroll Area */
+        .content-scroll {
+            padding: 32px;
+            overflow-y: auto;
+            height: 100%;
+        }
+
+        /* --- VISTAS (Páginas) --- */
+        .view-section { display: none; animation: fadeIn 0.3s ease; }
+        .view-section.active-view { display: block; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* --- DASHBOARD CARDS --- */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background-color: currentColor; /* Usa el color del texto definido inline */
+            opacity: 0.5;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .icon-box {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .card-label { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
+        .card-value { font-size: 28px; font-weight: 800; color: var(--text-main); }
+        .card-footer { margin-top: 8px; font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 5px;}
+        .trend-up { color: #166534; background: #DCFCE7; padding: 2px 6px; border-radius: 4px; font-weight: 600;}
+
+        /* --- TABLAS --- */
+        .table-container {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .table-toolbar {
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .btn-primary {
+            background-color: var(--primary);
+            color: var(--primary-text);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+            transition: transform 0.1s;
+        }
+        .btn-primary:active { transform: translateY(1px); }
+
+        table { width: 100%; border-collapse: collapse; }
+        
+        thead th {
+            text-align: left;
+            padding: 16px 24px;
+            background-color: #F9FAFB;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        tbody td {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 14px;
+            color: var(--text-main);
+        }
+
+        tbody tr:last-child td { border-bottom: none; }
+        tbody tr:hover { background-color: #F9FAFB; }
+
+        /* Badges */
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .status-paid { background: var(--success-bg); color: var(--success-text); }
+        .status-pending { background: var(--warning-bg); color: var(--warning-text); }
+        .status-overdue { background: var(--danger-bg); color: var(--danger-text); }
+
+        /* --- GRID DE OPERADORES --- */
+        .operators-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 24px;
+        }
+
+        .operator-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .operator-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            border-color: var(--primary);
+        }
+
+        .avatar {
+            width: 80px;
+            height: 80px;
+            background-color: #E5E7EB;
+            border-radius: 50%;
+            margin: 0 auto 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: #9CA3AF;
+            border: 3px solid white;
+            box-shadow: 0 0 0 2px var(--border-color);
+        }
+        
+        .op-name { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
+        .op-role { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; display: block;}
+        
+        .op-stat {
+            background: #F3F4F6;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="app-window">
+        <!-- SIDEBAR -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-icon">Z</div>
+                <div class="brand-text">
+                    <h1>ZOEC CIVIL</h1>
+                    <p>Equipos Pesados</p>
+                </div>
+            </div>
+
+            <nav class="nav-menu">
+                <button class="nav-btn active" onclick="switchView('dashboard', this)">
+                    <span class="material-icons-round">dashboard</span> Dashboard
+                </button>
+                <button class="nav-btn" onclick="switchView('alquileres', this)">
+                    <span class="material-icons-round">agriculture</span> Alquileres
+                </button>
+                <button class="nav-btn" onclick="switchView('gastos', this)">
+                    <span class="material-icons-round">payments</span> Gastos
+                </button>
+                <button class="nav-btn" onclick="switchView('operadores', this)">
+                    <span class="material-icons-round">engineering</span> Operadores
+                </button>
+                <button class="nav-btn" onclick="switchView('reportes', this)">
+                    <span class="material-icons-round">assessment</span> Reportes
+                </button>
+            </nav>
+
+            <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <button class="nav-btn">
+                    <span class="material-icons-round">settings</span> Configuración
+                </button>
+                <button class="nav-btn">
+                    <span class="material-icons-round">logout</span> Salir
+                </button>
+            </div>
+        </aside>
+
+        <!-- MAIN AREA -->
+        <div class="main-area">
+            <!-- Top Bar -->
+            <div class="top-bar">
+                <h2 class="page-title" id="pageTitle">Dashboard General</h2>
+                
+                <div class="search-bar">
+                    <span class="material-icons-round">search</span>
+                    <input type="text" placeholder="Buscar equipo, cliente o ID...">
+                </div>
+            </div>
+
+            <!-- Scrollable Content -->
+            <div class="content-scroll">
+                
+                <!-- VIEW: DASHBOARD -->
+                <div id="view-dashboard" class="view-section active-view">
+                    
+                    <!-- KPI Cards -->
+                    <div class="kpi-grid">
+                        <div class="card" style="color: #3B82F6;">
+                            <div class="card-header">
+                                <div class="icon-box" style="background: #EFF6FF; color: #3B82F6;">
+                                    <span class="material-icons-round">attach_money</span>
+                                </div>
+                                <span class="card-label">Ingresos Totales</span>
+                            </div>
+                            <div class="card-value">RD$ 4.2M</div>
+                            <div class="card-footer">
+                                <span class="trend-up">▲ 12%</span> vs mes anterior
+                            </div>
+                        </div>
+
+                        <div class="card" style="color: #F59E0B;">
+                            <div class="card-header">
+                                <div class="icon-box" style="background: #FFFBEB; color: #F59E0B;">
+                                    <span class="material-icons-round">pending_actions</span>
+                                </div>
+                                <span class="card-label">Pendiente Cobro</span>
+                            </div>
+                            <div class="card-value">RD$ 850k</div>
+                            <div class="card-footer">5 facturas abiertas</div>
+                        </div>
+
+                        <div class="card" style="color: #10B981;">
+                            <div class="card-header">
+                                <div class="icon-box" style="background: #ECFDF5; color: #10B981;">
+                                    <span class="material-icons-round">trending_up</span>
+                                </div>
+                                <span class="card-label">Utilidad Neta</span>
+                            </div>
+                            <div class="card-value">RD$ 2.8M</div>
+                            <div class="card-footer">Margen global: 66%</div>
+                        </div>
+
+                        <div class="card" style="color: #6366F1;">
+                            <div class="card-header">
+                                <div class="icon-box" style="background: #EEF2FF; color: #6366F1;">
+                                    <span class="material-icons-round">precision_manufacturing</span>
+                                </div>
+                                <span class="card-label">Ocupación</span>
+                            </div>
+                            <div class="card-value">85%</div>
+                            <div class="card-footer">11 de 13 equipos activos</div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Table -->
+                    <div class="table-container">
+                        <div class="table-toolbar">
+                            <h3 style="font-size: 16px;">Actividad Reciente</h3>
+                            <button class="btn-primary" onclick="alert('Función: Abrir reporte')">Ver Todo</button>
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Fecha</th>
+                                    <th>Equipo</th>
+                                    <th>Cliente</th>
+                                    <th>Monto</th>
+                                    <th>Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>2026-02-03</td>
+                                    <td>CAT 320D (Ficha 04)</td>
+                                    <td>Constructora HPP</td>
+                                    <td style="font-family: monospace;">RD$ 45,000.00</td>
+                                    <td><span class="status-badge status-paid"><span class="material-icons-round" style="font-size: 12px;">check_circle</span> Pagado</span></td>
+                                </tr>
+                                <tr>
+                                    <td>2026-02-02</td>
+                                    <td>Retroexcavadora 420F</td>
+                                    <td>Ing. Fernando Alba</td>
+                                    <td style="font-family: monospace;">RD$ 12,500.00</td>
+                                    <td><span class="status-badge status-pending"><span class="material-icons-round" style="font-size: 12px;">schedule</span> Pendiente</span></td>
+                                </tr>
+                                <tr>
+                                    <td>2026-02-01</td>
+                                    <td>Rodillo Compactador</td>
+                                    <td>Arbaje Isa</td>
+                                    <td style="font-family: monospace;">RD$ 8,200.00</td>
+                                    <td><span class="status-badge status-overdue"><span class="material-icons-round" style="font-size: 12px;">warning</span> Vencido</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- VIEW: ALQUILERES -->
+                <div id="view-alquileres" class="view-section">
+                    <div class="table-container">
+                        <div class="table-toolbar">
+                            <h3 style="font-size: 16px;">Registro de Alquileres</h3>
+                            <button class="btn-primary" onclick="alert('Función: Abrir diálogo Nuevo Alquiler')">
+                                <span class="material-icons-round">add</span> Nuevo Alquiler
+                            </button>
+                        </div>
+                        <!-- Filtros simulados -->
+                        <div style="padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; gap: 10px; background: #F9FAFB;">
+                            <select class="input-mock" style="padding: 8px; border-radius: 6px; border: 1px solid #D1D5DB;"><option>Todos los Equipos</option></select>
+                            <select class="input-mock" style="padding: 8px; border-radius: 6px; border: 1px solid #D1D5DB;"><option>Todos los Clientes</option></select>
+                            <input type="date" class="input-mock" style="padding: 8px; border-radius: 6px; border: 1px solid #D1D5DB;">
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Fecha</th>
+                                    <th>Equipo</th>
+                                    <th>Cliente</th>
+                                    <th>Ubicación</th>
+                                    <th>Horas</th>
+                                    <th>Monto</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>#1045</td>
+                                    <td>2026-02-03</td>
+                                    <td><b>CAT 320D</b></td>
+                                    <td>Constructora HPP</td>
+                                    <td>Patio Colonial</td>
+                                    <td>6.5</td>
+                                    <td>RD$ 45,000.00</td>
+                                </tr>
+                                <tr>
+                                    <td>#1044</td>
+                                    <td>2026-02-02</td>
+                                    <td><b>Retro 420F</b></td>
+                                    <td>Ing. Alba</td>
+                                    <td>Metaldom</td>
+                                    <td>4.0</td>
+                                    <td>RD$ 12,500.00</td>
+                                </tr>
+                                <tr>
+                                    <td>#1043</td>
+                                    <td>2026-02-02</td>
+                                    <td><b>Bulldozer D6</b></td>
+                                    <td>Obras Públicas</td>
+                                    <td>Av. Circunvalación</td>
+                                    <td>8.0</td>
+                                    <td>RD$ 65,000.00</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- VIEW: OPERADORES -->
+                <div id="view-operadores" class="view-section">
+                    <div class="operators-grid">
+                        <!-- Op 1 -->
+                        <div class="operator-card">
+                            <div class="avatar">👷</div>
+                            <div class="op-name">Juan Pérez</div>
+                            <span class="op-role">Operador de Retroexcavadora</span>
+                            <div class="op-stat">
+                                <span>Horas este mes:</span>
+                                <b>145 hrs</b>
+                            </div>
+                            <div class="op-stat">
+                                <span>Pagos pendientes:</span>
+                                <b style="color: var(--success-text);">RD$ 0.00</b>
+                            </div>
+                            <button class="btn-primary" style="width: 100%; justify-content: center; margin-top: 10px; background: white; border: 1px solid var(--border-color); color: var(--text-main); box-shadow: none;">Ver Detalle</button>
+                        </div>
+                         <!-- Op 2 -->
+                         <div class="operator-card">
+                            <div class="avatar">👨‍🔧</div>
+                            <div class="op-name">Carlos Rodriguez</div>
+                            <span class="op-role">Operador de Excavadora</span>
+                            <div class="op-stat">
+                                <span>Horas este mes:</span>
+                                <b>180 hrs</b>
+                            </div>
+                            <div class="op-stat">
+                                <span>Pagos pendientes:</span>
+                                <b style="color: var(--warning-text);">RD$ 12,500</b>
+                            </div>
+                            <button class="btn-primary" style="width: 100%; justify-content: center; margin-top: 10px; background: white; border: 1px solid var(--border-color); color: var(--text-main); box-shadow: none;">Ver Detalle</button>
+                        </div>
+                        <!-- Op 3 -->
+                        <div class="operator-card" style="opacity: 0.7; background: #F3F4F6;">
+                            <div class="avatar" style="background: #E5E7EB; color: #9CA3AF;">🚫</div>
+                            <div class="op-name">Luis Diaz</div>
+                            <span class="op-role">Camionero (Inactivo)</span>
+                            <div class="op-stat">
+                                <span>Horas este mes:</span>
+                                <b>0 hrs</b>
+                            </div>
+                            <button class="btn-primary" style="width: 100%; justify-content: center; margin-top: 10px; background: white; border: 1px solid var(--border-color); color: var(--text-main); box-shadow: none;">Ver Detalle</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW: GASTOS & REPORTES (Placeholders) -->
+                <div id="view-gastos" class="view-section">
+                    <div style="text-align: center; padding: 50px; color: var(--text-muted);">
+                        <span class="material-icons-round" style="font-size: 48px; display: block; margin-bottom: 20px;">construction</span>
+                        <h3>Módulo de Gastos</h3>
+                        <p>Aquí iría la tabla de gastos operativos y mantenimiento.</p>
+                    </div>
+                </div>
+
+                <div id="view-reportes" class="view-section">
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+                         <button class="btn-primary" style="height: 100px; font-size: 18px; justify-content: center; background: white; color: var(--text-main); border: 1px solid var(--border-color);">
+                            <span class="material-icons-round" style="font-size: 32px; color: #E53935;">picture_as_pdf</span>
+                            Reporte de Alquileres
+                         </button>
+                         <button class="btn-primary" style="height: 100px; font-size: 18px; justify-content: center; background: white; color: var(--text-main); border: 1px solid var(--border-color);">
+                            <span class="material-icons-round" style="font-size: 32px; color: #166534;">table_view</span>
+                            Exportar a Excel
+                         </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function switchView(viewId, btn) {
+            // 1. Actualizar estado de botones del menú
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            // 2. Ocultar todas las vistas
+            document.querySelectorAll('.view-section').forEach(el => {
+                el.classList.remove('active-view');
+            });
+
+            // 3. Mostrar la vista seleccionada
+            const target = document.getElementById('view-' + viewId);
+            if(target) {
+                target.classList.add('active-view');
+            }
+
+            // 4. Actualizar título superior
+            // Extraer solo el texto, ignorando el icono material
+            const textNode = Array.from(btn.childNodes).find(node => node.nodeType === 3);
+            const title = textNode ? textNode.textContent.trim() : viewId;
+            document.getElementById('pageTitle').textContent = title;
+        }
+    </script>
+</body>
+</html>

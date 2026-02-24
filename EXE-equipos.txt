@@ -1,0 +1,18 @@
+py -m PyInstaller --name "alquiler_equipos" --onefile --windowed --clean --add-data "c:\Users\servi\AppData\Local\Programs\Python\Python313\Lib\site-packages\sv_ttk;sv_ttk" --add-data "c:\Users\servi\AppData\Local\Programs\Python\Python313\Lib\site-packages\tkcalendar;tkcalendar" --hidden-import "babel.numbers" main_qt.py
+
+py -m PyInstaller --name "alquiler_equipos" --onefile --windowed --clean --paths="." --hidden-import="pandas" --hidden-import="plotly" --hidden-import="fpdf" --hidden-import="openpyxl" --hidden-import="progain4.services.report_generator" main_qt.py
+
+py -m PyInstaller `
+--name "alquiler_equipos" `
+--onefile `
+--windowed `
+--clean `
+--noconfirm `
+--paths "." `
+--hidden-import pandas `
+--hidden-import plotly `
+--hidden-import fpdf `
+--hidden-import openpyxl `
+--hidden-import progain4.services.report_generator `
+--add-data "D:\Dropbox\GITHUB\EQUIPOS_6.0\icons;icons" `
+main_qt.py

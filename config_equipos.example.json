@@ -1,0 +1,18 @@
+{
+  "firebase": {
+    "credentials_path": "firebase_credentials.json",
+    "project_id": "equipos-zoec",
+    "storage_bucket": "equipos-zoec.firebasestorage.app"
+  },
+  "backup": {
+    "ruta_backup_sqlite": "./backups/equipos_backup.db",
+    "frecuencia": "diario",
+    "hora_ejecucion": "02:00",
+    "ultimo_backup": null
+  },
+  "app": {
+    "tema": "claro",
+    "idioma": "es",
+    "ventana_maximizada": false
+  }
+}
