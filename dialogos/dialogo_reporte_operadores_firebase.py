@@ -26,6 +26,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
         fm: FirebaseManager,
         operadores_mapa: dict,
         equipos_mapa: dict,
+        clientes_mapa: dict = None,
         proyecto_id=None,
         parent=None,
     ):
@@ -37,6 +38,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
 
         self.operadores_mapa = operadores_mapa or {}
         self.equipos_mapa = equipos_mapa or {}
+        self.clientes_mapa = clientes_mapa or {}
 
         # Aplicar tema consistente
         self.setStyleSheet("""
@@ -253,7 +255,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
                 
                 alq["operador_nombre"] = self.operadores_mapa.get(oid, f"ID:{oid}")
                 alq["equipo_nombre"] = self.equipos_mapa.get(eid, f"ID:{eid}")
-                alq["cliente_nombre"] = f"Cliente {cid}"  # Puedes mejorarlo si tienes clientes_mapa
+                alq["cliente_nombre"] = self.clientes_mapa.get(cid, f"ID:{cid}")
 
             # Obtener pagos a operadores
             try:
@@ -309,10 +311,10 @@ class DialogoReporteOperadoresFirebase(QDialog):
 
             # Agregar datos custom para operadores
             rg.total_horas = total_horas
-            rg.pagos = pagos
+            rg.pagos_operador = pagos
 
             # Generar PDF
-            exito, error = rg.to_pdf(file_path)
+            exito, error = rg.to_pdf_operadores(file_path)
 
             if exito:
                 QMessageBox.information(
@@ -377,14 +379,16 @@ class DialogoReporteOperadoresFirebase(QDialog):
             for alq in alquileres:
                 oid = str(alq.get("operador_id", "") or "")
                 eid = str(alq.get("equipo_id", "") or "")
+                cid = str(alq.get("cliente_id", "") or "")
                 alq["operador_nombre"] = self.operadores_mapa.get(oid, f"ID:{oid}")
                 alq["equipo_nombre"] = self.equipos_mapa.get(eid, f"ID:{eid}")
+                alq["cliente_nombre"] = self.clientes_mapa.get(cid, f"ID:{cid}")
 
             # Crear DataFrame
             df = pd.DataFrame(alquileres)
             
             if not df.empty:
-                columnas_mostrar = ["fecha", "equipo_nombre", "operador_nombre", "horas", "monto"]
+                columnas_mostrar = ["fecha", "equipo_nombre", "operador_nombre", "cliente_nombre", "horas", "monto"]
                 columnas_existentes = [c for c in columnas_mostrar if c in df.columns]
                 df = df[columnas_existentes]
                 
@@ -392,6 +396,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
                     "fecha": "Fecha",
                     "equipo_nombre": "Equipo",
                     "operador_nombre": "Operador",
+                    "cliente_nombre": "Cliente",
                     "horas": "Horas",
                     "monto": "Monto"
                 })
