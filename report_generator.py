@@ -326,6 +326,130 @@ class ReportGenerator:
             ]))
             story.append(tot_tbl)
 
+            # --- Tabla "Precio por Hora por Equipo" ---
+            precio_hora_equipo = getattr(self, 'precio_hora_equipo', None)
+            if precio_hora_equipo:
+                story.append(Spacer(1, 20))
+                story.append(Paragraph(
+                    "<b>PRECIO POR HORA POR EQUIPO</b>",
+                    ParagraphStyle(
+                        name="TituloPrecio",
+                        fontSize=12,
+                        textColor=colors.HexColor("#1F7A1F"),
+                        spaceAfter=8,
+                        alignment=1,
+                    )
+                ))
+                currency = self.currency_symbol
+                table_data = [["Equipo", "Horas Totales", "Monto Total", "Precio Promedio/Hora"]]
+                total_horas = 0.0
+                total_monto = 0.0
+                for item in precio_hora_equipo:
+                    horas = float(item.get("horas", 0))
+                    monto = float(item.get("monto", 0))
+                    precio = float(item.get("precio_hora", 0))
+                    total_horas += horas
+                    total_monto += monto
+                    table_data.append([
+                        item.get("equipo_nombre", ""),
+                        f"{horas:,.2f}",
+                        f"{currency} {monto:,.2f}",
+                        f"{currency} {precio:,.2f}" if horas > 0 else "N/A",
+                    ])
+                precio_promedio_global = total_monto / total_horas if total_horas > 0 else 0
+                table_data.append([
+                    "TOTALES",
+                    f"{total_horas:,.2f}",
+                    f"{currency} {total_monto:,.2f}",
+                    f"{currency} {precio_promedio_global:,.2f}" if total_horas > 0 else "N/A",
+                ])
+                num_rows = len(table_data)
+                tbl_horas = Table(table_data, hAlign="CENTER")
+                style_cmds = [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#1F7A1F")),
+                    ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                    ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                    ("FONTNAME", (0, num_rows - 1), (-1, num_rows - 1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, num_rows - 1), (-1, num_rows - 1), colors.HexColor("#D4EDDA")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ]
+                tbl_horas.setStyle(TableStyle(style_cmds))
+                story.append(tbl_horas)
+
+                # --- NUEVO: Página con gráfico de barras ---
+                try:
+                    import matplotlib
+                    matplotlib.use('Agg')
+                    import matplotlib.pyplot as plt
+
+                    story.append(PageBreak())
+
+                    from reportlab.lib.styles import ParagraphStyle
+                    titulo_grafico = Paragraph(
+                        "<b>HORAS TRABAJADAS POR EQUIPO</b>",
+                        ParagraphStyle(
+                            name="TituloGrafico",
+                            fontSize=14,
+                            textColor=colors.HexColor("#1F7A1F"),
+                            spaceAfter=16,
+                            alignment=1,
+                        )
+                    )
+                    story.append(titulo_grafico)
+
+                    nombres = [item["equipo_nombre"] for item in precio_hora_equipo]
+                    horas_vals = [float(item.get("horas", 0)) for item in precio_hora_equipo]
+
+                    fig, ax = plt.subplots(figsize=(8, max(3, len(nombres) * 0.7)))
+
+                    bar_colors = ['#2E7D32', '#43A047', '#66BB6A', '#81C784', '#A5D6A7', '#C8E6C9']
+                    colores = [bar_colors[i % len(bar_colors)] for i in range(len(nombres))]
+
+                    bars = ax.barh(nombres, horas_vals, color=colores, edgecolor='#1B5E20', linewidth=0.5)
+
+                    for bar_item, valor in zip(bars, horas_vals):
+                        ax.text(bar_item.get_width() + 0.3, bar_item.get_y() + bar_item.get_height() / 2,
+                                f'{valor:,.1f} h', va='center', fontsize=9, fontweight='bold', color='#1B5E20')
+
+                    ax.set_xlabel('Horas', fontsize=11, fontweight='bold')
+                    ax.set_title('Distribución de Horas por Equipo', fontsize=13, fontweight='bold',
+                                 color='#1B5E20', pad=15)
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+
+                    plt.tight_layout()
+
+                    tmp_chart = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                    tmp_chart_path = tmp_chart.name
+                    tmp_chart.close()
+                    plt.savefig(tmp_chart_path, dpi=150, bbox_inches='tight', facecolor='white')
+                    plt.close(fig)
+
+                    from reportlab.platypus import Image as RLImage
+                    page_w, page_h = LETTER
+                    max_img_w = page_w - 72
+                    max_img_h = page_h - 180
+
+                    img = RLImage(tmp_chart_path)
+                    img_w, img_h = img.imageWidth, img.imageHeight
+                    scale = min(max_img_w / img_w, max_img_h / img_h)
+                    img.drawWidth = img_w * scale
+                    img.drawHeight = img_h * scale
+                    img.hAlign = 'CENTER'
+                    story.append(img)
+
+                except ImportError:
+                    logger.info("matplotlib no disponible, omitiendo página de gráfico de horas por equipo")
+                except Exception as e:
+                    logger.error(f"Error generando gráfico de horas por equipo: {e}", exc_info=True)
+
             # Construir PDF principal temporal (landscape)
             tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             tmp_main_path = tmp_main.name

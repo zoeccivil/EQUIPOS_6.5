@@ -1556,6 +1556,27 @@ class AppGUI(QMainWindow):
             # ---------------- 3) Enriquecer facturas con nombres legibles ----------------
             self._enriquecer_facturas_con_nombres(facturas)
 
+            # ---------------- 3b) Precio por hora por equipo ----------------
+            from collections import defaultdict
+            equipo_horas = defaultdict(float)
+            equipo_monto = defaultdict(float)
+            for f in facturas:
+                eid = str(f.get("equipo_id", "") or "")
+                nombre_equipo = f.get("equipo_nombre", self.equipos_mapa.get(eid, f"ID:{eid}"))
+                equipo_horas[nombre_equipo] += float(f.get("horas", 0) or 0)
+                equipo_monto[nombre_equipo] += float(f.get("monto", 0) or 0)
+
+            precio_hora_equipo = []
+            for nombre in sorted(equipo_horas.keys()):
+                horas = equipo_horas[nombre]
+                monto = equipo_monto[nombre]
+                precio_hora_equipo.append({
+                    "equipo_nombre": nombre,
+                    "horas": horas,
+                    "monto": monto,
+                    "precio_hora": monto / horas if horas > 0 else 0,
+                })
+
             # ---------------- 4) Totales ----------------
             total_facturado = sum(float(row.get("monto", 0) or 0) for row in facturas)
             total_abonado = sum(monto for _, monto in abonos_por_fecha)
@@ -1603,6 +1624,7 @@ class AppGUI(QMainWindow):
             rg.total_abonado = total_abonado
             rg.saldo = saldo
             rg.abonos = abonos  # compatibilidad, por si to_pdf usa _group_abonos_by_date
+            rg.precio_hora_equipo = precio_hora_equipo
 
             ok, error = rg.to_pdf(file_path)
             if ok:

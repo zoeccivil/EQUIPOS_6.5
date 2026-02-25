@@ -1,6 +1,6 @@
 {
   "firebase": {
-    "credentials_path": "E:/Dropbox/PROGAIN/PROGAIN_CREDENTIALS/firebase_equipos_key.json",
+    "credentials_path": "D:/Dropbox/PROGAIN/PROGAIN_CREDENTIALS/firebase_equipos_key.json",
     "project_id": "equipos-zoec",
     "storage_bucket": "equipos-zoec.firebasestorage.app"
   },
