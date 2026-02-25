@@ -1600,6 +1600,25 @@ class AppGUI(QMainWindow):
                 logger.error(f"Error calculando facturacion_por_equipo: {e}", exc_info=True)
                 facturacion_por_equipo = []
 
+            # --- Calcular horas por equipo (simplificado para tabla y gráfico) ---
+            horas_por_equipo = [
+                {"equipo_nombre": item["equipo_nombre"], "horas": item["horas"]}
+                for item in facturacion_por_equipo
+            ]
+
+            # --- Calcular precio por hora por equipo ---
+            precio_hora_equipo = []
+            for item in facturacion_por_equipo:
+                horas = item["horas"]
+                monto = item["total_facturado"]
+                precio = monto / horas if horas > 0 else 0
+                precio_hora_equipo.append({
+                    "equipo_nombre": item["equipo_nombre"],
+                    "horas": horas,
+                    "monto": monto,
+                    "precio_hora": precio,
+                })
+
             # ---------------- 5) Título, archivo destino, etc. ----------------
             es_general = cliente_id is None
             cliente_nombre = "GENERAL" if es_general else filtros["cliente_nombre"]
@@ -1639,6 +1658,8 @@ class AppGUI(QMainWindow):
             rg.abonos = abonos  # compatibilidad, por si to_pdf usa _group_abonos_by_date
             rg.facturacion_por_equipo = facturacion_por_equipo
             rg.equipos_mapa = self.equipos_mapa
+            rg.horas_por_equipo = horas_por_equipo
+            rg.precio_hora_equipo = precio_hora_equipo
 
             ok, error = rg.to_pdf(file_path)
             if ok:

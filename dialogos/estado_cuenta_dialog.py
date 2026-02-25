@@ -527,6 +527,31 @@ class EstadoCuentaDialog(QDialog):
             total_abonado = sum(monto for (_, monto) in abonos_por_fecha)
             saldo = total_facturado - total_abonado
 
+            # --- Calcular horas y precio por hora por equipo ---
+            from collections import defaultdict
+            equipo_horas = defaultdict(float)
+            equipo_monto = defaultdict(float)
+
+            for f in facturas:
+                nombre_equipo = f.get("equipo_nombre", "")
+                horas = float(f.get("horas", 0) or 0)
+                monto = float(f.get("monto", 0) or 0)
+                equipo_horas[nombre_equipo] += horas
+                equipo_monto[nombre_equipo] += monto
+
+            horas_por_equipo = []
+            precio_hora_equipo = []
+            for nombre in sorted(equipo_horas.keys()):
+                h = equipo_horas[nombre]
+                m = equipo_monto[nombre]
+                horas_por_equipo.append({"equipo_nombre": nombre, "horas": h})
+                precio_hora_equipo.append({
+                    "equipo_nombre": nombre,
+                    "horas": h,
+                    "monto": m,
+                    "precio_hora": m / h if h > 0 else 0,
+                })
+
             # Column map para el PDF
             es_general = (cliente_id is None)
             if es_general:
@@ -576,6 +601,8 @@ class EstadoCuentaDialog(QDialog):
             rg.total_facturado = total_facturado
             rg.total_abonado = total_abonado
             rg.saldo = saldo
+            rg.horas_por_equipo = horas_por_equipo
+            rg.precio_hora_equipo = precio_hora_equipo
 
             # Generar PDF
             exito, error = rg.to_pdf(file_path)

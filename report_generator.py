@@ -462,6 +462,110 @@ class ReportGenerator:
                 ]))
                 story.append(tot_tbl)
 
+            # --- Siempre agregar tablas de horas y precio (fuera del if/else) ---
+            horas_por_equipo = getattr(self, 'horas_por_equipo', None)
+            precio_hora_equipo = getattr(self, 'precio_hora_equipo', None)
+
+            if horas_por_equipo and len(horas_por_equipo) > 0:
+                story.append(Spacer(1, 20))
+                titulo_horas = Paragraph(
+                    "<b>HORAS TOTALES POR EQUIPO</b>",
+                    ParagraphStyle(
+                        name="TituloHorasFB",
+                        fontSize=12,
+                        textColor=colors.HexColor("#1F7A1F"),
+                        spaceAfter=8,
+                        alignment=1,
+                    )
+                )
+                story.append(titulo_horas)
+
+                table_data_horas = [["Equipo", "Horas Totales"]]
+                total_horas_tbl = 0.0
+                for item in horas_por_equipo:
+                    nombre = item.get("equipo_nombre", "")
+                    horas = float(item.get("horas", 0))
+                    total_horas_tbl += horas
+                    table_data_horas.append([nombre, f"{horas:,.2f}"])
+                table_data_horas.append(["TOTAL", f"{total_horas_tbl:,.2f}"])
+
+                tbl_horas = Table(table_data_horas, hAlign="CENTER", colWidths=[200, 100])
+                num_rows_h = len(table_data_horas)
+                style_horas = [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#1F7A1F")),
+                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                    ("FONTNAME", (0, num_rows_h - 1), (-1, num_rows_h - 1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, num_rows_h - 1), (-1, num_rows_h - 1), colors.HexColor("#D4EDDA")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ]
+                tbl_horas.setStyle(TableStyle(style_horas))
+                story.append(tbl_horas)
+
+            if precio_hora_equipo and len(precio_hora_equipo) > 0:
+                story.append(Spacer(1, 20))
+                titulo_precio = Paragraph(
+                    "<b>PRECIO POR HORA POR EQUIPO</b>",
+                    ParagraphStyle(
+                        name="TituloPrecioFB",
+                        fontSize=12,
+                        textColor=colors.HexColor("#1F7A1F"),
+                        spaceAfter=8,
+                        alignment=1,
+                    )
+                )
+                story.append(titulo_precio)
+
+                currency = self.currency_symbol
+                table_data_precio = [["Equipo", "Horas Totales", "Monto Total", "Precio Promedio/Hora"]]
+                total_horas_p = 0.0
+                total_monto_p = 0.0
+
+                for item in precio_hora_equipo:
+                    nombre = item.get("equipo_nombre", "")
+                    horas = float(item.get("horas", 0))
+                    monto = float(item.get("monto", 0))
+                    precio = float(item.get("precio_hora", 0))
+                    total_horas_p += horas
+                    total_monto_p += monto
+                    precio_str = f"{currency} {precio:,.2f}" if horas > 0 else "N/A"
+                    table_data_precio.append([
+                        nombre,
+                        f"{horas:,.2f}",
+                        f"{currency} {monto:,.2f}",
+                        precio_str,
+                    ])
+
+                precio_promedio_global = total_monto_p / total_horas_p if total_horas_p > 0 else 0
+                precio_global_str = f"{currency} {precio_promedio_global:,.2f}" if total_horas_p > 0 else "N/A"
+                table_data_precio.append([
+                    "TOTALES",
+                    f"{total_horas_p:,.2f}",
+                    f"{currency} {total_monto_p:,.2f}",
+                    precio_global_str,
+                ])
+
+                num_rows_p = len(table_data_precio)
+                tbl_precio = Table(table_data_precio, hAlign="CENTER", colWidths=[160, 90, 120, 130])
+                style_precio = [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#1F7A1F")),
+                    ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                    ("FONTNAME", (0, num_rows_p - 1), (-1, num_rows_p - 1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, num_rows_p - 1), (-1, num_rows_p - 1), colors.HexColor("#D4EDDA")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ]
+                tbl_precio.setStyle(TableStyle(style_precio))
+                story.append(tbl_precio)
+
             # --- C) Página 3: KPIs con matplotlib (opcional) ---
             try:
                 import matplotlib
@@ -482,16 +586,19 @@ class ReportGenerator:
                     horas_list = [float(r.get("horas", 0) or 0) for r in facturacion_por_equipo]
                     fact_list = [float(r.get("total_facturado", 0) or 0) for r in facturacion_por_equipo]
 
-                    # Gráfico 1: Horas Totales por Equipo (barras)
-                    fig1, ax1 = plt.subplots(figsize=(7, 3.5))
-                    bars = ax1.bar(range(len(nombres)), horas_list, color="#4CAF50")
-                    ax1.set_xticks(range(len(nombres)))
-                    ax1.set_xticklabels(nombres, rotation=30, ha="right", fontsize=8)
-                    ax1.set_ylabel("Horas")
-                    ax1.set_title("Horas Totales por Equipo")
-                    for bar, val in zip(bars, horas_list):
-                        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                                 f"{val:,.1f}", ha="center", va="bottom", fontsize=7)
+                    # Gráfico 1: Horas Totales por Equipo (barras horizontales)
+                    fig1, ax1 = plt.subplots(figsize=(8, max(3, len(nombres) * 0.7)))
+                    bar_colors = ['#2E7D32', '#43A047', '#66BB6A', '#81C784', '#A5D6A7', '#C8E6C9']
+                    colores = [bar_colors[i % len(bar_colors)] for i in range(len(nombres))]
+                    bars = ax1.barh(nombres, horas_list, color=colores, edgecolor='#1B5E20', linewidth=0.5)
+                    for bar_item, val in zip(bars, horas_list):
+                        ax1.text(bar_item.get_width() + 0.3, bar_item.get_y() + bar_item.get_height() / 2,
+                                 f'{val:,.1f} h', va='center', fontsize=9, fontweight='bold', color='#1B5E20')
+                    ax1.set_xlabel('Horas', fontsize=11, fontweight='bold')
+                    ax1.set_title('Horas Trabajadas por Equipo', fontsize=13, fontweight='bold',
+                                  color='#1B5E20', pad=15)
+                    ax1.spines['top'].set_visible(False)
+                    ax1.spines['right'].set_visible(False)
                     plt.tight_layout()
                     tmp1 = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
                     fig1.savefig(tmp1.name, dpi=120, bbox_inches="tight")
@@ -554,6 +661,70 @@ class ReportGenerator:
                     story.append(kpi_tbl)
                 except Exception as e:
                     logger.error(f"Error generando página KPIs: {e}", exc_info=True)
+
+            elif HAS_MATPLOTLIB and horas_por_equipo and len(horas_por_equipo) > 0:
+                # Gráfico solo de horas cuando no hay facturacion_por_equipo
+                try:
+                    story.append(PageBreak())
+                    story.append(Paragraph("HORAS TRABAJADAS POR EQUIPO", styles["Heading2"]))
+                    story.append(Spacer(1, 10))
+
+                    nombres = [r.get("equipo_nombre", "") for r in horas_por_equipo]
+                    horas_list = [float(r.get("horas", 0) or 0) for r in horas_por_equipo]
+
+                    # Gráfico de barras horizontales
+                    fig1, ax1 = plt.subplots(figsize=(8, max(3, len(nombres) * 0.7)))
+                    bar_colors = ['#2E7D32', '#43A047', '#66BB6A', '#81C784', '#A5D6A7', '#C8E6C9']
+                    colores = [bar_colors[i % len(bar_colors)] for i in range(len(nombres))]
+                    bars = ax1.barh(nombres, horas_list, color=colores, edgecolor='#1B5E20', linewidth=0.5)
+                    for bar_item, val in zip(bars, horas_list):
+                        ax1.text(bar_item.get_width() + 0.3, bar_item.get_y() + bar_item.get_height() / 2,
+                                 f'{val:,.1f} h', va='center', fontsize=9, fontweight='bold', color='#1B5E20')
+                    ax1.set_xlabel('Horas', fontsize=11, fontweight='bold')
+                    ax1.set_title('Distribución de Horas por Equipo', fontsize=13, fontweight='bold',
+                                  color='#1B5E20', pad=15)
+                    ax1.spines['top'].set_visible(False)
+                    ax1.spines['right'].set_visible(False)
+                    plt.tight_layout()
+                    tmp1 = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                    fig1.savefig(tmp1.name, dpi=150, bbox_inches="tight")
+                    plt.close(fig1)
+                    tmp1.close()
+                    tmp_chart_files.append(tmp1.name)
+
+                    # Insertar gráfico
+                    if os.path.exists(tmp1.name):
+                        img = Image(tmp1.name, width=450, height=280)
+                        story.append(img)
+                        story.append(Spacer(1, 14))
+
+                    # KPI resumen
+                    total_horas_kpi = sum(horas_list)
+                    kpi_headers = ["Total Horas", "Total Facturado", "Total Abonado", "Saldo"]
+                    kpi_values = [
+                        f"{total_horas_kpi:,.2f}",
+                        f"{self.currency_symbol} {total_facturado:,.2f}",
+                        f"{self.currency_symbol} {total_abonado:,.2f}",
+                        f"{self.currency_symbol} {saldo:,.2f}",
+                    ]
+                    kpi_tbl = Table([kpi_headers, kpi_values], hAlign="CENTER",
+                                    colWidths=[100, 130, 130, 130])
+                    kpi_bg = colors.HexColor("#C8E6C9") if saldo <= 0 else colors.HexColor("#FFCCBC")
+                    kpi_tbl.setStyle(TableStyle([
+                        ("FONTSIZE", (0, 0), (-1, -1), 10),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#37474F")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+                        ("ALIGN", (0, 1), (-1, 1), "CENTER"),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#37474F")),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                        ("TOPPADDING", (0, 0), (-1, -1), 8),
+                        ("BACKGROUND", (3, 1), (3, 1), kpi_bg),
+                    ]))
+                    story.append(kpi_tbl)
+                except Exception as e:
+                    logger.error(f"Error generando gráfico de horas: {e}", exc_info=True)
 
             # Construir PDF principal temporal (portrait)
             tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
