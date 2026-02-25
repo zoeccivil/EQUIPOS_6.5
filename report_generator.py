@@ -326,6 +326,121 @@ class ReportGenerator:
             ]))
             story.append(tot_tbl)
 
+            # --- NUEVO: Tabla de Horas por Equipo ---
+            horas_por_equipo = getattr(self, 'horas_por_equipo', None)
+            tmp_chart_path = None
+            if horas_por_equipo and len(horas_por_equipo) > 0:
+                story.append(Spacer(1, 20))
+
+                from reportlab.lib.styles import ParagraphStyle
+                titulo_horas = Paragraph(
+                    "<b>HORAS TOTALES POR EQUIPO</b>",
+                    ParagraphStyle(
+                        name="TituloHoras",
+                        fontSize=12,
+                        textColor=colors.HexColor("#1F7A1F"),
+                        spaceAfter=8,
+                        alignment=1,
+                    )
+                )
+                story.append(titulo_horas)
+
+                table_data = [["Equipo", "Horas Totales"]]
+                total_horas = 0.0
+                for item in horas_por_equipo:
+                    nombre = item.get("equipo_nombre", "")
+                    horas = float(item.get("horas", 0))
+                    total_horas += horas
+                    table_data.append([nombre, f"{horas:,.2f}"])
+
+                table_data.append(["TOTAL", f"{total_horas:,.2f}"])
+
+                tbl_horas = Table(table_data, hAlign="CENTER")
+
+                num_rows = len(table_data)
+                style_cmds = [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#1F7A1F")),
+                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                    ("FONTNAME", (0, num_rows - 1), (-1, num_rows - 1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, num_rows - 1), (-1, num_rows - 1), colors.HexColor("#D4EDDA")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ]
+                tbl_horas.setStyle(TableStyle(style_cmds))
+                story.append(tbl_horas)
+
+                # --- NUEVO: Página con gráfico de barras ---
+                try:
+                    import matplotlib
+                    matplotlib.use('Agg')
+                    import matplotlib.pyplot as plt
+
+                    story.append(PageBreak())
+
+                    from reportlab.lib.styles import ParagraphStyle
+                    titulo_grafico = Paragraph(
+                        "<b>HORAS TRABAJADAS POR EQUIPO</b>",
+                        ParagraphStyle(
+                            name="TituloGrafico",
+                            fontSize=14,
+                            textColor=colors.HexColor("#1F7A1F"),
+                            spaceAfter=16,
+                            alignment=1,
+                        )
+                    )
+                    story.append(titulo_grafico)
+
+                    nombres = [item["equipo_nombre"] for item in horas_por_equipo]
+                    horas_vals = [float(item.get("horas", 0)) for item in horas_por_equipo]
+
+                    fig, ax = plt.subplots(figsize=(8, max(3, len(nombres) * 0.7)))
+
+                    bar_colors = ['#2E7D32', '#43A047', '#66BB6A', '#81C784', '#A5D6A7', '#C8E6C9']
+                    colores = [bar_colors[i % len(bar_colors)] for i in range(len(nombres))]
+
+                    bars = ax.barh(nombres, horas_vals, color=colores, edgecolor='#1B5E20', linewidth=0.5)
+
+                    for bar_item, valor in zip(bars, horas_vals):
+                        ax.text(bar_item.get_width() + 0.3, bar_item.get_y() + bar_item.get_height() / 2,
+                                f'{valor:,.1f} h', va='center', fontsize=9, fontweight='bold', color='#1B5E20')
+
+                    ax.set_xlabel('Horas', fontsize=11, fontweight='bold')
+                    ax.set_title('Distribución de Horas por Equipo', fontsize=13, fontweight='bold',
+                                 color='#1B5E20', pad=15)
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+
+                    plt.tight_layout()
+
+                    tmp_chart = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                    tmp_chart_path = tmp_chart.name
+                    tmp_chart.close()
+                    plt.savefig(tmp_chart_path, dpi=150, bbox_inches='tight', facecolor='white')
+                    plt.close(fig)
+
+                    from reportlab.platypus import Image as RLImage
+                    from reportlab.lib.pagesizes import LETTER
+                    page_w, page_h = LETTER
+                    max_img_w = page_w - 72
+                    max_img_h = page_h - 180
+
+                    img = RLImage(tmp_chart_path)
+                    img_w, img_h = img.imageWidth, img.imageHeight
+                    scale = min(max_img_w / img_w, max_img_h / img_h)
+                    img.drawWidth = img_w * scale
+                    img.drawHeight = img_h * scale
+                    img.hAlign = 'CENTER'
+                    story.append(img)
+
+                except ImportError:
+                    logger.info("matplotlib no disponible, omitiendo página de gráfico de horas por equipo")
+                except Exception as e:
+                    logger.error(f"Error generando gráfico de horas por equipo: {e}", exc_info=True)
+
             # Construir PDF principal temporal (landscape)
             tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             tmp_main_path = tmp_main.name
@@ -337,6 +452,13 @@ class ReportGenerator:
                 leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36
             )
             doc.build(story)
+
+            # Limpiar temporal del gráfico si existe
+            try:
+                if tmp_chart_path and os.path.exists(tmp_chart_path):
+                    os.unlink(tmp_chart_path)
+            except Exception:
+                pass
 
             # Anexos (conduces)
             import shutil
