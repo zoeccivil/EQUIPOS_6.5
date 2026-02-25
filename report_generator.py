@@ -326,6 +326,66 @@ class ReportGenerator:
             ]))
             story.append(tot_tbl)
 
+            # --- Tabla "Precio por Hora por Equipo" ---
+            precio_hora_equipo = getattr(self, 'precio_hora_equipo', None)
+            if precio_hora_equipo:
+                story.append(Spacer(1, 20))
+                story.append(Paragraph(
+                    "<b>PRECIO POR HORA POR EQUIPO</b>",
+                    ParagraphStyle(
+                        name="TituloPrecio",
+                        fontSize=12,
+                        textColor=colors.HexColor("#1F7A1F"),
+                        spaceAfter=8,
+                        alignment=1,
+                    )
+                ))
+                currency = self.currency_symbol
+                table_data = [["Equipo", "Horas Totales", "Monto Total", "Precio Promedio/Hora"]]
+                total_horas = 0.0
+                total_monto = 0.0
+                for item in precio_hora_equipo:
+                    horas = float(item.get("horas", 0))
+                    monto = float(item.get("monto", 0))
+                    precio = float(item.get("precio_hora", 0))
+                    total_horas += horas
+                    total_monto += monto
+                    table_data.append([
+                        item.get("equipo_nombre", ""),
+                        f"{horas:,.2f}",
+                        f"{currency} {monto:,.2f}",
+                        f"{currency} {precio:,.2f}" if horas > 0 else "N/A",
+                    ])
+                precio_promedio_global = total_monto / total_horas if total_horas > 0 else 0
+                table_data.append([
+                    "TOTALES",
+                    f"{total_horas:,.2f}",
+                    f"{currency} {total_monto:,.2f}",
+                    f"{currency} {precio_promedio_global:,.2f}" if total_horas > 0 else "N/A",
+                ])
+                num_rows = len(table_data)
+                tbl_ph = Table(table_data, hAlign="CENTER")
+                style_cmds = [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#1F7A1F")),
+                    ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                    ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                    ("FONTNAME", (0, num_rows - 1), (-1, num_rows - 1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, num_rows - 1), (-1, num_rows - 1), colors.HexColor("#D4EDDA")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ]
+                for i in range(1, num_rows - 1):
+                    if i % 2 == 0:
+                        style_cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F8F9FA")))
+                tbl_ph.setStyle(TableStyle(style_cmds))
+                story.append(tbl_ph)
+
             # Construir PDF principal temporal (landscape)
             tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             tmp_main_path = tmp_main.name
