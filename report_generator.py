@@ -256,11 +256,13 @@ class ReportGenerator:
         Genera el PDF horizontal con:
         - Página(s) de Facturas (tabla con encabezado repetido).
         - PageBreak.
-        - Página de Abonos por fecha + Totales.
-        - Anexos (conduces) al final.
+        - Página 2: Facturación por Equipo (si disponible) + Resumen de Cuenta;
+          o Abonos por fecha + Totales (fallback).
+        - Página 3 (opcional): KPIs con gráficos matplotlib.
+        - Anexos (conduces) al final, cada uno con mini tabla de info.
         """
         try:
-            import tempfile, os
+            import tempfile, os, shutil
 
             styles = getSampleStyleSheet()
             story = []
@@ -273,8 +275,39 @@ class ReportGenerator:
             column_map = getattr(self, "column_map", {}) or {}
             data = list(getattr(self, "data", []) or [])
 
-            # Encabezado principal
-            story.append(Paragraph(title, styles["Title"]))
+            # --- A) Logo opcional ---
+            logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo", "logo.png")
+            has_logo = os.path.exists(logo_path)
+
+            # Encabezado principal con logo opcional
+            try:
+                if has_logo:
+                    logo_img = Image(logo_path, width=60, height=60)
+                    title_para = Paragraph(
+                        f'<b>{title}</b><br/><font size="10" color="#555555">EQUIPOS 6.5</font>',
+                        ParagraphStyle("TitleLogo", parent=styles["Title"], fontSize=16, leading=20)
+                    )
+                    header_tbl = Table(
+                        [[logo_img, title_para]],
+                        colWidths=[70, None],
+                        hAlign="LEFT"
+                    )
+                    header_tbl.setStyle(TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("LEFTPADDING", (0, 0), (0, 0), 0),
+                        ("RIGHTPADDING", (0, 0), (0, 0), 8),
+                    ]))
+                    story.append(header_tbl)
+                else:
+                    story.append(Paragraph(title, styles["Title"]))
+                    story.append(Paragraph(
+                        '<font size="10" color="#555555">EQUIPOS 6.5</font>',
+                        ParagraphStyle("Subtitle", parent=styles["Normal"], alignment=TA_CENTER)
+                    ))
+            except Exception as e:
+                logger.error(f"Error al construir encabezado: {e}")
+                story.append(Paragraph(title, styles["Title"]))
+
             if cliente:
                 story.append(Paragraph(f"Cliente: {cliente}", styles["Heading3"]))
             if date_range:
@@ -285,46 +318,242 @@ class ReportGenerator:
             if not column_map and data and isinstance(data[0], dict):
                 column_map = {k: k.capitalize() for k in data[0].keys()}
 
-            # Tabla Facturas (puede paginar automáticamente)
+            # Tabla Facturas (puede paginar automáticamente) con zebra sutil
             story.append(Paragraph("Facturas", styles["Heading3"]))
             facturas_tbl = self._build_facturas_table(column_map, data, font_size=9)
+            # Apply subtle zebra stripes (#FFFFFF / #F8F9FA)
+            try:
+                n_rows = len(data)
+                zebra_cmds = []
+                for i in range(1, n_rows + 1):
+                    if i % 2 == 0:
+                        zebra_cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F8F9FA")))
+                    else:
+                        zebra_cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FFFFFF")))
+                if zebra_cmds:
+                    facturas_tbl.setStyle(TableStyle(zebra_cmds))
+            except Exception:
+                pass
             story.append(facturas_tbl)
 
-            # Page break para iniciar sección de abonos en página nueva
+            # --- B) Página 2 ---
             story.append(PageBreak())
 
-            # Abonos por fecha (agrupar si no viene agrupado)
-            abonos_por_fecha = getattr(self, "abonos_por_fecha", None)
-            if not abonos_por_fecha:
-                abonos_list = getattr(self, "abonos", [])
-                abonos_por_fecha = self._group_abonos_by_date(abonos_list)
-
-            story.append(Paragraph("Abonos por fecha", styles["Heading3"]))
-            story.append(self._make_table_abonos_por_fecha(abonos_por_fecha, currency_symbol=self.currency_symbol))
-            story.append(Spacer(1, 18))
-
-            # Totales
+            facturacion_por_equipo = getattr(self, "facturacion_por_equipo", None) or []
             total_facturado = float(getattr(self, "total_facturado", 0) or 0)
             total_abonado = float(getattr(self, "total_abonado", 0) or 0)
             saldo = float(getattr(self, "saldo", total_facturado - total_abonado) or 0)
 
-            tot_headers = ["Total Facturas", "Total Abonos", "Saldo"]
-            tot_values = [
-                f"{self.currency_symbol} {total_facturado:,.2f}",
-                f"{self.currency_symbol} {total_abonado:,.2f}",
-                f"{self.currency_symbol} {saldo:,.2f}",
-            ]
-            tot_tbl = Table([tot_headers, tot_values], hAlign="RIGHT", colWidths=[130, 130, 130])
-            tot_tbl.setStyle(TableStyle([
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2A5ADF")),
-                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("ALIGN", (0, 1), (-1, 1), "RIGHT"),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-            ]))
-            story.append(tot_tbl)
+            if facturacion_por_equipo:
+                # Página 2: Facturación por Equipo
+                story.append(Paragraph("FACTURACIÓN POR EQUIPO", styles["Heading2"]))
+                story.append(Spacer(1, 8))
+
+                eq_headers = ["Equipo", "Total Facturado", "Total Abonado", "Saldo Pendiente", "Horas"]
+                eq_rows = [eq_headers]
+                for row in facturacion_por_equipo:
+                    row_saldo = float(row.get("saldo", 0) or 0)
+                    eq_rows.append([
+                        str(row.get("equipo_nombre", "")),
+                        f"{self.currency_symbol} {float(row.get('total_facturado', 0) or 0):,.2f}",
+                        f"{self.currency_symbol} {float(row.get('total_abonado', 0) or 0):,.2f}",
+                        f"{self.currency_symbol} {row_saldo:,.2f}",
+                        f"{float(row.get('horas', 0) or 0):,.2f}",
+                    ])
+                # Fila totales
+                total_horas_eq = sum(float(r.get("horas", 0) or 0) for r in facturacion_por_equipo)
+                total_fact_eq = sum(float(r.get("total_facturado", 0) or 0) for r in facturacion_por_equipo)
+                total_abon_eq = sum(float(r.get("total_abonado", 0) or 0) for r in facturacion_por_equipo)
+                total_saldo_eq = total_fact_eq - total_abon_eq
+                eq_rows.append([
+                    "TOTALES",
+                    f"{self.currency_symbol} {total_fact_eq:,.2f}",
+                    f"{self.currency_symbol} {total_abon_eq:,.2f}",
+                    f"{self.currency_symbol} {total_saldo_eq:,.2f}",
+                    f"{total_horas_eq:,.2f}",
+                ])
+
+                eq_tbl = Table(eq_rows, hAlign="LEFT", colWidths=[180, 110, 110, 110, 70])
+                eq_style = [
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#1F7A1F")),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    # Fila de totales en negrita
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E8EEF9")),
+                ]
+                # Colorear saldo por equipo
+                for i, row in enumerate(facturacion_por_equipo, start=1):
+                    row_saldo = float(row.get("saldo", 0) or 0)
+                    if row_saldo <= 0:
+                        eq_style.append(("BACKGROUND", (3, i), (3, i), colors.HexColor("#C8E6C9")))
+                    else:
+                        eq_style.append(("BACKGROUND", (3, i), (3, i), colors.HexColor("#FFCCBC")))
+                eq_tbl.setStyle(TableStyle(eq_style))
+                story.append(eq_tbl)
+                story.append(Spacer(1, 18))
+
+                # Resumen de cuenta
+                story.append(Paragraph("RESUMEN DE CUENTA", styles["Heading3"]))
+                resumen_data = [
+                    ["Total Alquileres", "Total Abonos", "Saldo Pendiente"],
+                    [
+                        f"{self.currency_symbol} {total_facturado:,.2f}",
+                        f"{self.currency_symbol} {total_abonado:,.2f}",
+                        f"{self.currency_symbol} {saldo:,.2f}",
+                    ],
+                ]
+                saldo_bg = colors.HexColor("#C8E6C9") if saldo <= 0 else colors.HexColor("#FFCCBC")
+                res_tbl = Table(resumen_data, hAlign="LEFT", colWidths=[150, 150, 150])
+                res_tbl.setStyle(TableStyle([
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2A5ADF")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
+                    ("ALIGN", (0, 1), (-1, 1), "RIGHT"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    ("BACKGROUND", (2, 1), (2, 1), saldo_bg),
+                ]))
+                story.append(res_tbl)
+
+                # Incluir también tabla de abonos por fecha como referencia
+                abonos_por_fecha = getattr(self, "abonos_por_fecha", None)
+                if not abonos_por_fecha:
+                    abonos_list = getattr(self, "abonos", [])
+                    abonos_por_fecha = self._group_abonos_by_date(abonos_list)
+                if abonos_por_fecha:
+                    story.append(Spacer(1, 18))
+                    story.append(Paragraph("Abonos por fecha", styles["Heading3"]))
+                    story.append(self._make_table_abonos_por_fecha(abonos_por_fecha, currency_symbol=self.currency_symbol))
+
+            else:
+                # Fallback: Abonos por fecha + Totales (comportamiento original)
+                abonos_por_fecha = getattr(self, "abonos_por_fecha", None)
+                if not abonos_por_fecha:
+                    abonos_list = getattr(self, "abonos", [])
+                    abonos_por_fecha = self._group_abonos_by_date(abonos_list)
+
+                story.append(Paragraph("Abonos por fecha", styles["Heading3"]))
+                story.append(self._make_table_abonos_por_fecha(abonos_por_fecha, currency_symbol=self.currency_symbol))
+                story.append(Spacer(1, 18))
+
+                tot_headers = ["Total Facturas", "Total Abonos", "Saldo"]
+                tot_values = [
+                    f"{self.currency_symbol} {total_facturado:,.2f}",
+                    f"{self.currency_symbol} {total_abonado:,.2f}",
+                    f"{self.currency_symbol} {saldo:,.2f}",
+                ]
+                tot_tbl = Table([tot_headers, tot_values], hAlign="RIGHT", colWidths=[130, 130, 130])
+                tot_tbl.setStyle(TableStyle([
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2A5ADF")),
+                    ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (0, 1), (-1, 1), "RIGHT"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                ]))
+                story.append(tot_tbl)
+
+            # --- C) Página 3: KPIs con matplotlib (opcional) ---
+            try:
+                import matplotlib
+                matplotlib.use('Agg')
+                import matplotlib.pyplot as plt
+                HAS_MATPLOTLIB = True
+            except ImportError:
+                HAS_MATPLOTLIB = False
+
+            tmp_chart_files = []
+            if HAS_MATPLOTLIB and facturacion_por_equipo:
+                try:
+                    story.append(PageBreak())
+                    story.append(Paragraph("ANÁLISIS POR EQUIPO", styles["Heading2"]))
+                    story.append(Spacer(1, 10))
+
+                    nombres = [r.get("equipo_nombre", "") for r in facturacion_por_equipo]
+                    horas_list = [float(r.get("horas", 0) or 0) for r in facturacion_por_equipo]
+                    fact_list = [float(r.get("total_facturado", 0) or 0) for r in facturacion_por_equipo]
+
+                    # Gráfico 1: Horas Totales por Equipo (barras)
+                    fig1, ax1 = plt.subplots(figsize=(7, 3.5))
+                    bars = ax1.bar(range(len(nombres)), horas_list, color="#4CAF50")
+                    ax1.set_xticks(range(len(nombres)))
+                    ax1.set_xticklabels(nombres, rotation=30, ha="right", fontsize=8)
+                    ax1.set_ylabel("Horas")
+                    ax1.set_title("Horas Totales por Equipo")
+                    for bar, val in zip(bars, horas_list):
+                        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                                 f"{val:,.1f}", ha="center", va="bottom", fontsize=7)
+                    plt.tight_layout()
+                    tmp1 = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                    fig1.savefig(tmp1.name, dpi=120, bbox_inches="tight")
+                    plt.close(fig1)
+                    tmp1.close()
+                    tmp_chart_files.append(tmp1.name)
+
+                    # Gráfico 2: Distribución de Facturación (pie)
+                    fig2, ax2 = plt.subplots(figsize=(5, 4))
+                    fact_nonzero = [(n, v) for n, v in zip(nombres, fact_list) if v > 0]
+                    if fact_nonzero:
+                        pie_names, pie_vals = zip(*fact_nonzero)
+                        ax2.pie(pie_vals, labels=pie_names, autopct="%1.1f%%", startangle=90,
+                                textprops={"fontsize": 8})
+                        ax2.set_title("Distribución de Facturación por Equipo")
+                        plt.tight_layout()
+                        tmp2 = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                        fig2.savefig(tmp2.name, dpi=120, bbox_inches="tight")
+                        plt.close(fig2)
+                        tmp2.close()
+                        tmp_chart_files.append(tmp2.name)
+
+                    # Insertar gráficos en el PDF
+                    chart_row = []
+                    chart_widths = []
+                    for chart_path in tmp_chart_files:
+                        if os.path.exists(chart_path):
+                            chart_row.append(Image(chart_path, width=250, height=160))
+                            chart_widths.append(270)
+                    if chart_row:
+                        chart_tbl = Table([chart_row], colWidths=chart_widths, hAlign="LEFT")
+                        chart_tbl.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+                        story.append(chart_tbl)
+                        story.append(Spacer(1, 14))
+
+                    # KPI boxes
+                    total_horas_kpi = sum(horas_list)
+                    kpi_headers = ["Total Horas", "Total Facturado", "Total Abonado", "Saldo"]
+                    kpi_values = [
+                        f"{total_horas_kpi:,.2f}",
+                        f"{self.currency_symbol} {total_facturado:,.2f}",
+                        f"{self.currency_symbol} {total_abonado:,.2f}",
+                        f"{self.currency_symbol} {saldo:,.2f}",
+                    ]
+                    kpi_tbl = Table([kpi_headers, kpi_values], hAlign="LEFT",
+                                    colWidths=[100, 130, 130, 130])
+                    kpi_bg = colors.HexColor("#C8E6C9") if saldo <= 0 else colors.HexColor("#FFCCBC")
+                    kpi_tbl.setStyle(TableStyle([
+                        ("FONTSIZE", (0, 0), (-1, -1), 10),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#37474F")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+                        ("ALIGN", (0, 1), (-1, 1), "CENTER"),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#37474F")),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                        ("TOPPADDING", (0, 0), (-1, -1), 8),
+                        ("BACKGROUND", (3, 1), (3, 1), kpi_bg),
+                    ]))
+                    story.append(kpi_tbl)
+                except Exception as e:
+                    logger.error(f"Error generando página KPIs: {e}", exc_info=True)
 
             # Construir PDF principal temporal (landscape)
             tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
@@ -338,12 +567,17 @@ class ReportGenerator:
             )
             doc.build(story)
 
-            # Anexos (conduces)
-            import shutil
+            # Limpiar archivos temporales de gráficos
+            for f in tmp_chart_files:
+                try:
+                    if os.path.exists(f):
+                        os.remove(f)
+                except Exception:
+                    pass
 
+            # Anexos (conduces) con mini tabla de info
             anexos = self._collect_conduces_to_attach()
             if not anexos:
-                # Mover incluso entre discos diferentes
                 shutil.move(tmp_main_path, out_path)
                 return True, None
 
@@ -352,17 +586,17 @@ class ReportGenerator:
                 if a["type"] == "pdf":
                     annex_pdf_paths.append(a["path"])
                 else:
-                    page_pdf = self._image_to_pdf_page(a["path"], a["label"])
+                    page_pdf = self._image_to_pdf_page_with_info(
+                        a["path"], a["label"], a.get("row_data")
+                    )
                     if page_pdf:
                         annex_pdf_paths.append(page_pdf)
 
             ok, err = self._merge_main_with_annexes(tmp_main_path, annex_pdf_paths, out_path)
             if not ok:
-                # Si falla el merge, al menos movemos el principal
                 shutil.move(tmp_main_path, out_path)
                 return False, f"No se pudieron anexar algunos conduces: {err}"
 
-            # Limpieza de temporales (si tienes self._limpiar_temp_files)
             try:
                 self._limpiar_temp_files()
             except Exception:
@@ -374,7 +608,7 @@ class ReportGenerator:
             import traceback
             print("to_pdf error:", e)
             traceback.print_exc()
-            return False, str(e) 
+            return False, str(e)
  
     def _agregar_anexos_conduces(self, elementos, estilos):
         """
@@ -635,8 +869,7 @@ class ReportGenerator:
             if not storage_path:
                 continue
 
-            # Si ya viene una URL http(s), no podemos usar descargar_conduce; opcionalmente podrías bajarlo con requests.
-            # En tu app guardas storage_path (conduces/YYYY/MM/file.ext), así que debería funcionar.
+            # Se guardas storage_path (conduces/YYYY/MM/file.ext), así que debería funcionar.
             try:
                 local_path = sm.descargar_conduce(storage_path)
                 if not local_path:
@@ -646,7 +879,7 @@ class ReportGenerator:
                 numero = str(row.get("conduce") or row.get("id") or "")
                 label = f"Conduce No. {numero}" if numero else "Conduce"
                 tipo = "pdf" if ext == ".pdf" else "image"
-                anexos.append({"label": label, "path": local_path, "type": tipo})
+                anexos.append({"label": label, "path": local_path, "type": tipo, "row_data": row})
             except Exception:
                 continue
 
@@ -694,6 +927,96 @@ class ReportGenerator:
         except Exception:
             return None
 
+
+    def _image_to_pdf_page_with_info(self, img_path: str, label: str, row_data: dict = None) -> str | None:
+        """
+        Convierte una imagen en una página PDF con mini tabla de información arriba.
+        Si row_data es None o vacío, cae back a _image_to_pdf_page.
+        """
+        if not row_data:
+            return self._image_to_pdf_page(img_path, label)
+        try:
+            import tempfile
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import LETTER
+            from reportlab.lib.utils import ImageReader
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib import colors as rl_colors
+
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp_path = tmp.name
+            tmp.close()
+
+            styles = getSampleStyleSheet()
+            story = []
+
+            # Mini tabla de información del conduce
+            def _v(key, alt=""):
+                return str(row_data.get(key) or alt or "")
+
+            currency = getattr(self, "currency_symbol", "RD$")
+            monto_val = row_data.get("monto", "")
+            try:
+                monto_str = f"{currency} {float(monto_val):,.2f}" if monto_val not in ("", None) else ""
+            except Exception:
+                monto_str = str(monto_val or "")
+
+            horas_val = row_data.get("horas", "")
+            try:
+                horas_str = f"{float(horas_val):,.2f}" if horas_val not in ("", None) else ""
+            except Exception:
+                horas_str = str(horas_val or "")
+
+            info_rows = [
+                ["Campo", "Valor"],
+                ["Conduce No.", _v("conduce")],
+                ["Fecha", _v("fecha")],
+                ["Cliente", _v("cliente_nombre") or _v("cliente")],
+                ["Equipo", _v("equipo_nombre") or _v("equipo")],
+                ["Operador", _v("operador_nombre") or _v("operador")],
+                ["Horas", horas_str],
+                ["Monto", monto_str],
+            ]
+
+            info_tbl = Table(info_rows, colWidths=[100, 350], hAlign="LEFT")
+            info_tbl.setStyle(TableStyle([
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#E6F4EA")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.HexColor("#1F7A1F")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#1F7A1F")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8F9FA")]),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ]))
+
+            story.append(Paragraph(label, styles["Heading3"]))
+            story.append(Spacer(1, 6))
+            story.append(info_tbl)
+            story.append(Spacer(1, 10))
+
+            # Imagen del conduce
+            try:
+                img_rl = RLImage(img_path)
+                img_rl._restrictSize(480, 480)
+                story.append(img_rl)
+            except Exception as e:
+                logger.warning(f"No se pudo insertar imagen {img_path}: {e}")
+                story.append(Paragraph(f"<i>No se pudo cargar la imagen del conduce</i>", styles["Normal"]))
+
+            doc = SimpleDocTemplate(
+                tmp_path,
+                pagesize=LETTER,
+                leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36
+            )
+            doc.build(story)
+            return tmp_path
+        except Exception as e:
+            logger.error(f"Error en _image_to_pdf_page_with_info: {e}", exc_info=True)
+            return self._image_to_pdf_page(img_path, label)
 
     def _merge_main_with_annexes(self, main_pdf: str, annex_pdf_paths: list[str], out_path: str) -> tuple[bool, str | None]:
         """
