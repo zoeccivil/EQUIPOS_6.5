@@ -375,7 +375,279 @@ class ReportGenerator:
             print("to_pdf error:", e)
             traceback.print_exc()
             return False, str(e) 
- 
+
+    def to_pdf_operadores(self, out_path: str):
+        """
+        Genera PDF Portrait para Reporte de Operadores con:
+        - Página(s) de Alquileres
+        - PageBreak
+        - Pagos por Fecha (solo fechas con pago > 0)
+        - Totales del operador
+        - Anexos (conduces) al final
+        """
+        try:
+            import tempfile, os, shutil
+
+            styles = getSampleStyleSheet()
+            story = []
+
+            title = getattr(self, "title", "REPORTE DE OPERADORES")
+            cliente = getattr(self, "cliente", "")  # nombre del operador
+            date_range = getattr(self, "date_range", "")
+            cs = getattr(self, "currency_symbol", "RD$")
+            column_map = getattr(self, "column_map", {}) or {}
+            data = list(getattr(self, "data", []) or [])
+
+            page_w, page_h = LETTER  # Portrait
+            margin_l, margin_r = 40, 40
+            available_w = page_w - margin_l - margin_r
+
+            # ─── ENCABEZADO ───
+            style_title = ParagraphStyle(
+                "OpTitle", parent=styles["Title"], fontSize=16,
+                fontName="Helvetica-Bold", alignment=1  # CENTER
+            )
+            style_oper = ParagraphStyle(
+                "OpOperador", parent=styles["Normal"], fontSize=11,
+                fontName="Helvetica-BoldOblique", spaceAfter=2
+            )
+            story.append(Paragraph(title, style_title))
+            if cliente:
+                story.append(Paragraph(f"Operador: {cliente}", style_oper))
+            if date_range:
+                story.append(Paragraph(f"Periodo: {date_range}", styles["Normal"]))
+            story.append(Spacer(1, 12))
+
+            # ─── TABLA ALQUILERES ───
+            story.append(Paragraph("<b><i>Alquileres</i></b>", styles["Heading3"]))
+
+            if column_map and data:
+                keys = list(column_map.keys())
+                headers = [column_map[k] for k in keys]
+
+                # Calcular anchos proporcionales para Portrait
+                proportions = {
+                    "fecha": 0.15, "equipo_nombre": 0.28, "cliente_nombre": 0.25,
+                    "horas": 0.12, "monto": 0.20,
+                }
+                col_widths = [available_w * proportions.get(k, 0.15) for k in keys]
+
+                # Construir filas
+                rows = []
+                for r in data:
+                    row_cells = []
+                    for k in keys:
+                        val = r.get(k, "")
+                        if k == "horas" and val not in ("", None):
+                            try: val = f"{float(val):,.2f}"
+                            except: pass
+                        elif k == "monto" and val not in ("", None):
+                            try: val = f"{cs} {float(val):,.2f}"
+                            except: pass
+                        # Wrap para columnas de texto largo
+                        if k in ("equipo_nombre", "cliente_nombre"):
+                            style_cell = ParagraphStyle(
+                                "CellWrap", parent=styles["BodyText"],
+                                fontSize=8, leading=10, fontName="Helvetica"
+                            )
+                            row_cells.append(Paragraph(escape(str(val or "")), style_cell))
+                        else:
+                            row_cells.append(str(val or ""))
+                    rows.append(row_cells)
+
+                tbl = Table([headers] + rows, hAlign="CENTER",
+                            colWidths=col_widths, repeatRows=1)
+
+                num_cols = [i for i, k in enumerate(keys) if k in ("horas", "monto")]
+                ts = [
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E6F4EA")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1F7A1F")),
+                    ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#1F7A1F")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                     [colors.white, colors.HexColor("#F9FBF9")]),
+                ]
+                for idx in num_cols:
+                    ts.append(("ALIGN", (idx, 1), (idx, -1), "RIGHT"))
+                tbl.setStyle(TableStyle(ts))
+                story.append(tbl)
+            else:
+                story.append(Paragraph("Sin datos de alquileres.", styles["Normal"]))
+
+            # ─── PAGE BREAK ───
+            story.append(PageBreak())
+
+            # ─── PAGOS POR FECHA ───
+            story.append(Paragraph("<b><i>Pagos por Fecha</i></b>", styles["Heading3"]))
+
+            pagos_op = getattr(self, "pagos_operador", []) or []
+
+            # Agrupar pagos por fecha (campo "horas" del pago, NO "horas_pagadas")
+            pagos_agrup = {}
+            for p in pagos_op:
+                fecha = p.get("fecha", "")
+                if not fecha:
+                    continue
+                monto_p = float(p.get("monto", 0) or 0)
+                horas_p = float(p.get("horas", 0) or 0)  # ← "horas", como lo guarda pago_operador_dialog
+                if fecha not in pagos_agrup:
+                    pagos_agrup[fecha] = {"monto": 0.0, "horas": 0.0}
+                pagos_agrup[fecha]["monto"] += monto_p
+                pagos_agrup[fecha]["horas"] += horas_p
+
+            # Solo fechas con pago > 0
+            fechas_con_pago = sorted(
+                [f for f, v in pagos_agrup.items() if v["monto"] > 0]
+            )
+
+            if fechas_con_pago:
+                pag_headers = ["Fecha", "Total Pagado", "Horas Pagadas", "Precio Promedio/Hora"]
+                pag_widths = [available_w * 0.22, available_w * 0.28,
+                              available_w * 0.22, available_w * 0.28]
+                pag_rows = []
+                for f in fechas_con_pago:
+                    m = pagos_agrup[f]["monto"]
+                    h = pagos_agrup[f]["horas"]
+                    precio_prom = f"{cs} {(m / h):,.2f}" if h > 0 else "N/A"
+                    pag_rows.append([
+                        f,
+                        f"{cs} {m:,.2f}",
+                        f"{h:,.2f} h",
+                        precio_prom,
+                    ])
+
+                tbl_pagos = Table([pag_headers] + pag_rows,
+                                  hAlign="CENTER", colWidths=pag_widths)
+                tbl_pagos.setStyle(TableStyle([
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFF1E0")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#A35D00")),
+                    ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#A35D00")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                     [colors.white, colors.HexColor("#FFFAF5")]),
+                ]))
+                story.append(tbl_pagos)
+            else:
+                story.append(Paragraph("No se registraron pagos en este período.",
+                                       styles["Normal"]))
+
+            story.append(Spacer(1, 20))
+
+            # ─── TOTALES ───
+            total_pagado = float(getattr(self, "total_pagado", 0) or 0)
+            total_horas_trab = float(getattr(self, "total_horas", 0) or 0)
+
+            # Horas pagadas = sum de "horas" de todos los pagos
+            total_horas_pagadas = sum(
+                float(p.get("horas", 0) or 0) for p in pagos_op
+            )
+
+            # Precio promedio por hora = Total Pagado / Horas Pagadas
+            if total_horas_pagadas > 0:
+                precio_prom_hora = total_pagado / total_horas_pagadas
+                precio_prom_txt = f"{cs} {precio_prom_hora:,.2f}"
+            else:
+                precio_prom_hora = 0.0
+                precio_prom_txt = "N/A"
+
+            # SALDO = Total Pagado - (Horas Trabajadas s/Conduce × Precio Promedio/Hora)
+            if precio_prom_hora > 0:
+                costo_horas_reales = total_horas_trab * precio_prom_hora
+                saldo = total_pagado - costo_horas_reales
+            else:
+                saldo = total_pagado
+
+            # Color del saldo: verde si >= 0 (a favor), rojo si < 0 (debes)
+            if saldo >= 0:
+                saldo_color = colors.HexColor("#2E7D32")
+                saldo_bg = colors.HexColor("#E8F5E9")
+            else:
+                saldo_color = colors.HexColor("#D32F2F")
+                saldo_bg = colors.HexColor("#FFF4CC")
+
+            tot_data = [
+                ["Concepto", "Valor"],
+                ["Total Pagado:", f"{cs} {total_pagado:,.2f}"],
+                ["Precio Promedio por Hora:", precio_prom_txt],
+                ["Horas Trabajadas (s/Conduce):", f"{total_horas_trab:,.2f} h"],
+                ["Horas Pagadas (s/Pagos):", f"{total_horas_pagadas:,.2f} h"],
+                ["Saldo Pendiente:", f"{cs} {saldo:,.2f}"],
+            ]
+
+            tot_widths = [available_w * 0.55, available_w * 0.45]
+            tbl_tot = Table(tot_data, hAlign="CENTER", colWidths=tot_widths)
+
+            ts_tot = [
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF9")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2A5ADF")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#2A5ADF")),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                # Destacar saldo
+                ("BACKGROUND", (0, -1), (-1, -1), saldo_bg),
+                ("TEXTCOLOR", (0, -1), (-1, -1), saldo_color),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ]
+            tbl_tot.setStyle(TableStyle(ts_tot))
+            story.append(tbl_tot)
+
+            # ─── CONSTRUIR PDF TEMPORAL ───
+            tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp_main_path = tmp_main.name
+            tmp_main.close()
+
+            doc = SimpleDocTemplate(
+                tmp_main_path,
+                pagesize=LETTER,  # ← Portrait
+                leftMargin=margin_l, rightMargin=margin_r,
+                topMargin=40, bottomMargin=40
+            )
+            doc.build(story)
+
+            # ─── ANEXOS (CONDUCES) ───
+            anexos = self._collect_conduces_to_attach()
+            if not anexos:
+                shutil.move(tmp_main_path, out_path)
+                return True, None
+
+            annex_pdf_paths = []
+            for a in anexos:
+                if a["type"] == "pdf":
+                    annex_pdf_paths.append(a["path"])
+                else:
+                    page_pdf = self._image_to_pdf_page(a["path"], a["label"])
+                    if page_pdf:
+                        annex_pdf_paths.append(page_pdf)
+
+            ok, err = self._merge_main_with_annexes(tmp_main_path, annex_pdf_paths, out_path)
+            if not ok:
+                shutil.move(tmp_main_path, out_path)
+                return False, f"No se pudieron anexar algunos conduces: {err}"
+
+            try:
+                self._limpiar_temp_files()
+            except Exception:
+                pass
+
+            return True, None
+
+        except Exception as e:
+            import traceback
+            print("to_pdf_operadores error:", e)
+            traceback.print_exc()
+            return False, str(e)
+        
+        
     def _agregar_anexos_conduces(self, elementos, estilos):
         """
         Agrega una sección de anexos con las imágenes de los conduces.
@@ -1379,4 +1651,386 @@ class ReportGenerator:
 
         except Exception as e:
             logger.error(f"Error generando Excel rendimientos: {e}", exc_info=True)
+            return False, str(e)
+        
+    # ════════════════════════════════════════════════════════════════════
+    # NUEVO: to_pdf_detallado - Reporte Detallado de Equipos V2
+    # ════════════════════════════════════════════���═══════════════════════
+
+    def to_pdf_detallado(self, out_path: str):
+        """
+        Genera PDF Landscape con:
+        - Pág 1+: Tabla de Facturas (con fila de totales)
+        - PageBreak
+        - Pág N+1: Tabla de Pagos y Rendimientos por Equipo
+        - Pág N+2: Totales Globales
+        - Pág N+3: Gráfico de Horas por Equipo (matplotlib)
+        - Anexos (conduces)
+        """
+        try:
+            import tempfile, os, shutil
+
+            styles = getSampleStyleSheet()
+            story = []
+
+            title = getattr(self, "title", "REPORTE DETALLADO DE EQUIPOS")
+            date_range = getattr(self, "date_range", "")
+            cs = getattr(self, "currency_symbol", "RD$")
+            column_map = getattr(self, "column_map", {}) or {}
+            data = list(getattr(self, "data", []) or [])
+
+            rendimientos = getattr(self, "rendimientos_por_equipo", []) or []
+            totales = getattr(self, "totales_globales", {}) or {}
+
+            page_w, page_h = landscape(LETTER)
+
+            # ─── ENCABEZADO ───
+            style_title = ParagraphStyle(
+                "DetTitle", parent=styles["Title"], fontSize=18,
+                fontName="Helvetica-Bold", alignment=1
+            )
+            story.append(Paragraph(title, style_title))
+            if date_range:
+                story.append(Paragraph(f"Periodo: {date_range}", styles["Normal"]))
+            story.append(Spacer(1, 12))
+
+            # ─── PÁG 1+: TABLA FACTURAS ───
+            story.append(Paragraph("<b><i>Detalle de Facturas</i></b>", styles["Heading3"]))
+
+            if column_map and data:
+                facturas_tbl = self._build_facturas_table(column_map, data, font_size=8, page_w=page_w)
+                story.append(facturas_tbl)
+                story.append(Spacer(1, 6))
+
+                # Fila de totales
+                total_horas = sum(float(r.get("horas_raw", 0) or 0) for r in data)
+                total_monto = sum(float(r.get("monto_raw", 0) or 0) for r in data)
+
+                tot_line = (
+                    f"<b>Total: {len(data)} facturas  |  "
+                    f"Horas: {total_horas:,.2f}  |  "
+                    f"Monto: {cs} {total_monto:,.2f}</b>"
+                )
+                style_tot = ParagraphStyle(
+                    "TotLine", parent=styles["Normal"], fontSize=10,
+                    fontName="Helvetica-Bold", textColor=colors.HexColor("#1F7A1F"),
+                )
+                story.append(Paragraph(tot_line, style_tot))
+            else:
+                story.append(Paragraph("Sin datos de facturas.", styles["Normal"]))
+
+            # ─── PAGE BREAK ───
+            story.append(PageBreak())
+
+            # ─── PÁG: PAGOS Y RENDIMIENTOS POR EQUIPO ───
+            story.append(Paragraph("<b><i>Pagos y Rendimientos por Equipo</i></b>", styles["Heading3"]))
+            story.append(Spacer(1, 8))
+
+            if rendimientos:
+                rend_headers = [
+                    "Equipo", f"Facturado ({cs})", f"Gastos ({cs})",
+                    f"Pagos Op. ({cs})", f"Rendimiento ({cs})", "% Rend."
+                ]
+                rend_rows = []
+                for r in rendimientos:
+                    rend_rows.append([
+                        r.get("equipo", ""),
+                        f"{cs} {r.get('facturado', 0):,.2f}",
+                        f"{cs} {r.get('gastos', 0):,.2f}",
+                        f"{cs} {r.get('pagos_op', 0):,.2f}",
+                        f"{cs} {r.get('rendimiento', 0):,.2f}",
+                        f"{r.get('pct', 0):,.1f}%",
+                    ])
+
+                available_w = page_w - 72
+                rend_widths = [
+                    available_w * 0.25, available_w * 0.15, available_w * 0.15,
+                    available_w * 0.15, available_w * 0.18, available_w * 0.12,
+                ]
+
+                tbl_rend = Table(
+                    [rend_headers] + rend_rows,
+                    hAlign="CENTER", colWidths=rend_widths, repeatRows=1,
+                )
+
+                ts_rend = [
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1B5E20")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#388E3C")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                     [colors.white, colors.HexColor("#E8F5E9")]),
+                ]
+
+                # Colorear rendimiento negativo en rojo
+                for i, r in enumerate(rendimientos):
+                    row_idx = i + 1
+                    if r.get("rendimiento", 0) < 0:
+                        ts_rend.append(("TEXTCOLOR", (4, row_idx), (5, row_idx), colors.HexColor("#D32F2F")))
+
+                tbl_rend.setStyle(TableStyle(ts_rend))
+                story.append(tbl_rend)
+            else:
+                story.append(Paragraph("Sin datos de rendimientos.", styles["Normal"]))
+
+            # ─── PAGE BREAK ───
+            story.append(PageBreak())
+
+            # ─── PÁG: TOTALES GLOBALES ───
+            story.append(Paragraph("<b><i>Totales Globales</i></b>", styles["Heading3"]))
+            story.append(Spacer(1, 12))
+
+            total_alq = totales.get("total_alquileres", 0)
+            total_abo = totales.get("total_abonos", 0)
+            total_gg = totales.get("total_gastos_globales", 0)
+            rend_g = totales.get("rendimiento_global", 0)
+
+            tot_data = [
+                ["Concepto", "Valor"],
+                ["Total Alquileres (Facturado)", f"{cs} {total_alq:,.2f}"],
+                ["Total Abonos (Cobrado)", f"{cs} {total_abo:,.2f}"],
+                ["Total Gastos Globales (Gastos + Pagos Op.)", f"{cs} {total_gg:,.2f}"],
+                ["Rendimiento Global", f"{cs} {rend_g:,.2f}"],
+            ]
+
+            tot_widths = [350, 200]
+            tbl_tot = Table(tot_data, hAlign="CENTER", colWidths=tot_widths)
+
+            rend_color = colors.HexColor("#2E7D32") if rend_g >= 0 else colors.HexColor("#D32F2F")
+            rend_bg = colors.HexColor("#E8F5E9") if rend_g >= 0 else colors.HexColor("#FFEBEE")
+
+            ts_tot = [
+                ("FONTSIZE", (0, 0), (-1, -1), 11),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565C0")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#1565C0")),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                # Destacar rendimiento
+                ("BACKGROUND", (0, -1), (-1, -1), rend_bg),
+                ("TEXTCOLOR", (0, -1), (-1, -1), rend_color),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, -1), (-1, -1), 13),
+            ]
+            tbl_tot.setStyle(TableStyle(ts_tot))
+            story.append(tbl_tot)
+
+            # ─── PAGE BREAK ───
+            story.append(PageBreak())
+
+            # ─── PÁG: GRÁFICO DE HORAS POR EQUIPO (matplotlib) ───
+            story.append(Paragraph("<b><i>Horas Facturadas por Equipo</i></b>", styles["Heading3"]))
+            story.append(Spacer(1, 10))
+
+            chart_path = self._generar_grafico_horas_por_equipo(data, cs)
+            if chart_path and os.path.exists(chart_path):
+                try:
+                    img = Image(chart_path)
+                    # Escalar al ancho disponible
+                    img_w = page_w - 100
+                    img_h = img_w * 0.5  # aspect ratio ~2:1
+                    img.drawWidth = img_w
+                    img.drawHeight = img_h
+                    story.append(img)
+                    self.temp_files.append(chart_path)
+                except Exception as e:
+                    logger.warning(f"No se pudo insertar gráfico: {e}")
+                    story.append(Paragraph("No se pudo generar el gráfico.", styles["Normal"]))
+            else:
+                story.append(Paragraph("No hay datos suficientes para generar el gráfico.", styles["Normal"]))
+
+            # ─── CONSTRUIR PDF TEMPORAL ───
+            tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp_main_path = tmp_main.name
+            tmp_main.close()
+
+            doc = SimpleDocTemplate(
+                tmp_main_path,
+                pagesize=landscape(LETTER),
+                leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36,
+            )
+            doc.build(story)
+
+            # ─── ANEXOS (CONDUCES) ───
+            anexos = self._collect_conduces_to_attach()
+            if not anexos:
+                shutil.move(tmp_main_path, out_path)
+                return True, None
+
+            annex_pdf_paths = []
+            for a in anexos:
+                if a["type"] == "pdf":
+                    annex_pdf_paths.append(a["path"])
+                else:
+                    page_pdf = self._image_to_pdf_page(a["path"], a["label"])
+                    if page_pdf:
+                        annex_pdf_paths.append(page_pdf)
+
+            ok, err = self._merge_main_with_annexes(tmp_main_path, annex_pdf_paths, out_path)
+            if not ok:
+                shutil.move(tmp_main_path, out_path)
+                return False, f"No se pudieron anexar algunos conduces: {err}"
+
+            try:
+                self._limpiar_temp_files()
+            except Exception:
+                pass
+
+            return True, None
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return False, str(e)
+
+    def _generar_grafico_horas_por_equipo(self, data: list, cs: str = "RD$") -> str | None:
+        """
+        Genera un gráfico de barras horizontales: Horas facturadas por equipo.
+        Retorna la ruta de la imagen PNG temporal.
+        """
+        try:
+            import matplotlib
+            matplotlib.use("Agg")  # Backend sin GUI
+            import matplotlib.pyplot as plt
+            import matplotlib.ticker as ticker
+            import tempfile
+
+            # Agrupar horas por equipo
+            horas_por_equipo = {}
+            monto_por_equipo = {}
+            for r in data:
+                equipo = r.get("equipo", "") or r.get("equipo_nombre", "") or "Sin equipo"
+                horas = float(r.get("horas_raw", 0) or 0)
+                monto = float(r.get("monto_raw", 0) or 0)
+                horas_por_equipo[equipo] = horas_por_equipo.get(equipo, 0.0) + horas
+                monto_por_equipo[equipo] = monto_por_equipo.get(equipo, 0.0) + monto
+
+            if not horas_por_equipo:
+                return None
+
+            # Ordenar por horas desc
+            sorted_equipos = sorted(horas_por_equipo.items(), key=lambda x: x[1], reverse=True)
+            nombres = [e[0] for e in sorted_equipos]
+            horas_vals = [e[1] for e in sorted_equipos]
+            montos_vals = [monto_por_equipo.get(n, 0) for n in nombres]
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, max(4, len(nombres) * 0.55)))
+
+            # ── Gráfico 1: Horas por equipo ──
+            bar_colors_h = ["#2E7D32" if h > 0 else "#9E9E9E" for h in horas_vals]
+            bars1 = ax1.barh(nombres, horas_vals, color=bar_colors_h, edgecolor="white", height=0.6)
+            ax1.set_xlabel("Horas Facturadas", fontsize=10, fontweight="bold")
+            ax1.set_title("Horas por Equipo", fontsize=13, fontweight="bold", color="#1B5E20")
+            ax1.invert_yaxis()
+            ax1.grid(axis="x", linestyle="--", alpha=0.4)
+
+            # Etiquetas en las barras
+            for bar, val in zip(bars1, horas_vals):
+                if val > 0:
+                    ax1.text(
+                        bar.get_width() + max(horas_vals) * 0.01, bar.get_y() + bar.get_height() / 2,
+                        f"{val:,.1f}h", va="center", fontsize=8, fontweight="bold", color="#1B5E20",
+                    )
+
+            # ── Gráfico 2: Monto por equipo ──
+            bar_colors_m = ["#1565C0" if m > 0 else "#9E9E9E" for m in montos_vals]
+            bars2 = ax2.barh(nombres, montos_vals, color=bar_colors_m, edgecolor="white", height=0.6)
+            ax2.set_xlabel(f"Monto Facturado ({cs})", fontsize=10, fontweight="bold")
+            ax2.set_title("Facturación por Equipo", fontsize=13, fontweight="bold", color="#0D47A1")
+            ax2.invert_yaxis()
+            ax2.grid(axis="x", linestyle="--", alpha=0.4)
+            ax2.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f"{x:,.0f}"))
+
+            for bar, val in zip(bars2, montos_vals):
+                if val > 0:
+                    ax2.text(
+                        bar.get_width() + max(montos_vals) * 0.01, bar.get_y() + bar.get_height() / 2,
+                        f"{cs} {val:,.0f}", va="center", fontsize=7, fontweight="bold", color="#0D47A1",
+                    )
+
+            plt.tight_layout(pad=2.0)
+
+            # Guardar como PNG temporal
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            tmp_path = tmp.name
+            tmp.close()
+            fig.savefig(tmp_path, dpi=150, bbox_inches="tight", facecolor="white")
+            plt.close(fig)
+
+            return tmp_path
+
+        except ImportError:
+            logger.warning("matplotlib no está instalado. No se generará gráfico.")
+            return None
+        except Exception as e:
+            logger.error(f"Error generando gráfico: {e}", exc_info=True)
+            return None
+
+    def to_excel_detallado(self, filepath: str):
+        """
+        Genera Excel con 3 hojas:
+        1. Facturas
+        2. Rendimientos por Equipo
+        3. Totales Globales
+        """
+        try:
+            import pandas as pd
+
+            cs = getattr(self, "currency_symbol", "RD$")
+            column_map = getattr(self, "column_map", {}) or {}
+            data = list(getattr(self, "data", []) or [])
+            rendimientos = getattr(self, "rendimientos_por_equipo", []) or []
+            totales = getattr(self, "totales_globales", {}) or {}
+
+            with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+                # Hoja 1: Facturas
+                if data and column_map:
+                    df_cols = {k: v for k, v in column_map.items()}
+                    rows = []
+                    for r in data:
+                        row = {}
+                        for k in df_cols:
+                            row[df_cols[k]] = r.get(k, "")
+                        rows.append(row)
+                    df_facturas = pd.DataFrame(rows)
+                    df_facturas.to_excel(writer, sheet_name="Facturas", index=False)
+
+                # Hoja 2: Rendimientos por Equipo
+                if rendimientos:
+                    rend_rows = []
+                    for r in rendimientos:
+                        rend_rows.append({
+                            "Equipo": r.get("equipo", ""),
+                            f"Facturado ({cs})": r.get("facturado", 0),
+                            f"Gastos ({cs})": r.get("gastos", 0),
+                            f"Pagos Op. ({cs})": r.get("pagos_op", 0),
+                            f"Rendimiento ({cs})": r.get("rendimiento", 0),
+                            "% Rendimiento": r.get("pct", 0),
+                        })
+                    df_rend = pd.DataFrame(rend_rows)
+                    df_rend.to_excel(writer, sheet_name="Rendimientos", index=False)
+
+                # Hoja 3: Totales Globales
+                tot_rows = [
+                    {"Concepto": "Total Alquileres (Facturado)", "Valor": totales.get("total_alquileres", 0)},
+                    {"Concepto": "Total Abonos (Cobrado)", "Valor": totales.get("total_abonos", 0)},
+                    {"Concepto": "Total Gastos Globales", "Valor": totales.get("total_gastos_globales", 0)},
+                    {"Concepto": "Rendimiento Global", "Valor": totales.get("rendimiento_global", 0)},
+                ]
+                df_tot = pd.DataFrame(tot_rows)
+                df_tot.to_excel(writer, sheet_name="Totales", index=False)
+
+            logger.info(f"Excel detallado generado: {filepath}")
+            return True, None
+
+        except Exception as e:
+            logger.error(f"Error generando Excel detallado: {e}", exc_info=True)
             return False, str(e)
