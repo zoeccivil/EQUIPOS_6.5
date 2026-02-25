@@ -1556,6 +1556,21 @@ class AppGUI(QMainWindow):
             # ---------------- 3) Enriquecer facturas con nombres legibles ----------------
             self._enriquecer_facturas_con_nombres(facturas)
 
+            # --- NUEVO: Calcular horas totales por equipo ---
+            from collections import defaultdict
+            horas_por_equipo = defaultdict(float)
+            for f in facturas:
+                eid = str(f.get("equipo_id", "") or "")
+                nombre_equipo = f.get("equipo_nombre", self.equipos_mapa.get(eid, f"ID:{eid}"))
+                horas = float(f.get("horas", 0) or 0)
+                horas_por_equipo[nombre_equipo] += horas
+
+            # Convertir a lista de dicts ordenada por nombre
+            horas_equipo_lista = [
+                {"equipo_nombre": nombre, "horas": horas}
+                for nombre, horas in sorted(horas_por_equipo.items())
+            ]
+
             # ---------------- 4) Totales ----------------
             total_facturado = sum(float(row.get("monto", 0) or 0) for row in facturas)
             total_abonado = sum(monto for _, monto in abonos_por_fecha)
@@ -1603,6 +1618,7 @@ class AppGUI(QMainWindow):
             rg.total_abonado = total_abonado
             rg.saldo = saldo
             rg.abonos = abonos  # compatibilidad, por si to_pdf usa _group_abonos_by_date
+            rg.horas_por_equipo = horas_equipo_lista  # Lista de dicts: [{"equipo_nombre": str, "horas": float}, ...]
 
             ok, error = rg.to_pdf(file_path)
             if ok:
