@@ -1566,6 +1566,40 @@ class AppGUI(QMainWindow):
                 f"total_abonado={total_abonado}, saldo={saldo}"
             )
 
+            # ---------------- 4b) Facturación por equipo ----------------
+            try:
+                from collections import defaultdict
+                alquiler_ids = [f.get("id") for f in facturas if f.get("id")]
+                pagos_por_alquiler = self.fm.obtener_pagos_por_alquileres(alquiler_ids) if alquiler_ids else {}
+
+                equipo_facturado = defaultdict(float)
+                equipo_horas = defaultdict(float)
+                equipo_abonado = defaultdict(float)
+
+                for f in facturas:
+                    eid = str(f.get("equipo_id", "") or "")
+                    equipo_facturado[eid] += float(f.get("monto", 0) or 0)
+                    equipo_horas[eid] += float(f.get("horas", 0) or 0)
+                    alq_id = f.get("id", "")
+                    equipo_abonado[eid] += pagos_por_alquiler.get(alq_id, 0.0)
+
+                facturacion_por_equipo = []
+                for eid in sorted(equipo_facturado.keys()):
+                    nombre = self.equipos_mapa.get(eid, f"ID:{eid}")
+                    fact = equipo_facturado[eid]
+                    abon = equipo_abonado[eid]
+                    hrs = equipo_horas[eid]
+                    facturacion_por_equipo.append({
+                        "equipo_nombre": nombre,
+                        "total_facturado": fact,
+                        "total_abonado": abon,
+                        "saldo": fact - abon,
+                        "horas": hrs,
+                    })
+            except Exception as e:
+                logger.error(f"Error calculando facturacion_por_equipo: {e}", exc_info=True)
+                facturacion_por_equipo = []
+
             # ---------------- 5) Título, archivo destino, etc. ----------------
             es_general = cliente_id is None
             cliente_nombre = "GENERAL" if es_general else filtros["cliente_nombre"]
@@ -1603,6 +1637,8 @@ class AppGUI(QMainWindow):
             rg.total_abonado = total_abonado
             rg.saldo = saldo
             rg.abonos = abonos  # compatibilidad, por si to_pdf usa _group_abonos_by_date
+            rg.facturacion_por_equipo = facturacion_por_equipo
+            rg.equipos_mapa = self.equipos_mapa
 
             ok, error = rg.to_pdf(file_path)
             if ok:

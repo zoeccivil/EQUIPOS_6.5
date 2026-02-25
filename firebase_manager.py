@@ -1375,6 +1375,25 @@ class FirebaseManager:
         except Exception as e:
             logger.error(f"Error al recalcular estado de pago para alquiler {alquiler_id}: {e}", exc_info=True)
 
+    def obtener_pagos_por_alquileres(self, alquiler_ids: list) -> dict:
+        """
+        Para cada alquiler_id, suma los pagos de su subcolección 'pagos'.
+        Returns: {alquiler_id: total_pagado}
+        """
+        resultado = {}
+        for alq_id in alquiler_ids:
+            try:
+                pagos_docs = self.db.collection("alquileres").document(alq_id).collection("pagos").stream()
+                total = 0.0
+                for pdoc in pagos_docs:
+                    pdata = pdoc.to_dict()
+                    total += float(pdata.get("monto", 0) or 0)
+                resultado[alq_id] = total
+            except Exception as e:
+                logger.error(f"Error leyendo pagos de alquiler {alq_id}: {e}")
+                resultado[alq_id] = 0.0
+        return resultado
+
     def registrar_abono_general_cliente(self, datos_pago: Dict[str, Any]):
         """
         Registra un abono general de un cliente y lo aplica a las facturas pendientes,
