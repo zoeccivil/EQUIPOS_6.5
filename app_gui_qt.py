@@ -1676,21 +1676,21 @@ class AppGUI(QMainWindow):
         if es_general:
             return {
                 "fecha": "Fecha",
-                "conduce": "Conduce",
-                "ubicacion": "Ubicación",
+                "cliente_nombre": "Cliente",
                 "equipo_nombre": "Equipo",
                 "operador_nombre": "Operador",
+                "ubicacion": "Ubicación",
+                "conduce": "Conduce",
                 "horas": "Horas",
                 "monto": "Monto",
-                "cliente_nombre": "Cliente",
             }
         else:
             return {
                 "fecha": "Fecha",
-                "conduce": "Conduce",
-                "ubicacion": "Ubicación",
                 "equipo_nombre": "Equipo",
                 "operador_nombre": "Operador",
+                "ubicacion": "Ubicación",
+                "conduce": "Conduce",
                 "horas": "Horas",
                 "monto": "Monto",
             }

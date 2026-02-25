@@ -217,7 +217,7 @@ class ReportGenerator:
 
         # Calcular anchos dinámicos
         if page_w is None:
-            page_w, _ = landscape(LETTER)
+            page_w, _ = LETTER
         col_widths = self._auto_compute_col_widths(
             column_map,
             data,
@@ -555,14 +555,14 @@ class ReportGenerator:
                 except Exception as e:
                     logger.error(f"Error generando página KPIs: {e}", exc_info=True)
 
-            # Construir PDF principal temporal (landscape)
+            # Construir PDF principal temporal (portrait)
             tmp_main = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
             tmp_main_path = tmp_main.name
             tmp_main.close()
 
             doc = SimpleDocTemplate(
                 tmp_main_path,
-                pagesize=landscape(LETTER),
+                pagesize=LETTER,
                 leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36
             )
             doc.build(story)
