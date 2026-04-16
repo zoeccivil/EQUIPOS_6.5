@@ -26,6 +26,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
         fm: FirebaseManager,
         operadores_mapa: dict,
         equipos_mapa: dict,
+        clientes_mapa: dict = None,   # ← AGREGAR ESTE PARÁMETRO
         proyecto_id=None,
         parent=None,
     ):
@@ -37,6 +38,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
 
         self.operadores_mapa = operadores_mapa or {}
         self.equipos_mapa = equipos_mapa or {}
+        self.clientes_mapa = clientes_mapa or {}   # ← AGREGAR ESTA LÍNEA
 
         # Aplicar tema consistente
         self.setStyleSheet("""
@@ -213,7 +215,6 @@ class DialogoReporteOperadoresFirebase(QDialog):
     def exportar_pdf(self):
         """Genera el PDF del reporte de operadores"""
         try:
-            # Obtener filtros
             filtros = self.get_filtros()
             operador_nombre = filtros["operador_nombre"]
             operador_id = filtros["operador_id"]
@@ -224,20 +225,13 @@ class DialogoReporteOperadoresFirebase(QDialog):
             # Diálogo para guardar
             nombre_sugerido = f"Reporte_Operadores_{operador_nombre.replace(' ', '_')}_{fecha_inicio}_a_{fecha_fin}.pdf"
             file_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Guardar Reporte de Operadores",
-                nombre_sugerido,
-                "PDF (*.pdf)"
+                self, "Guardar Reporte de Operadores", nombre_sugerido, "PDF (*.pdf)"
             )
-
             if not file_path:
-                return  # Usuario canceló
+                return
 
-            # Obtener datos de alquileres (facturas) con filtros
-            filtros_alq = {
-                "fecha_inicio": fecha_inicio,
-                "fecha_fin": fecha_fin,
-            }
+            # Obtener alquileres
+            filtros_alq = {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin}
             if operador_id:
                 filtros_alq["operador_id"] = operador_id
             if equipo_id:
@@ -245,23 +239,21 @@ class DialogoReporteOperadoresFirebase(QDialog):
 
             alquileres = self.fm.obtener_alquileres(filtros_alq) or []
 
-            # Enriquecer con nombres
+            # Enriquecer con nombres REALES
             for alq in alquileres:
                 oid = str(alq.get("operador_id", "") or "")
                 eid = str(alq.get("equipo_id", "") or "")
                 cid = str(alq.get("cliente_id", "") or "")
-                
                 alq["operador_nombre"] = self.operadores_mapa.get(oid, f"ID:{oid}")
                 alq["equipo_nombre"] = self.equipos_mapa.get(eid, f"ID:{eid}")
-                alq["cliente_nombre"] = f"Cliente {cid}"  # Puedes mejorarlo si tienes clientes_mapa
+                alq["cliente_nombre"] = self.clientes_mapa.get(cid, f"ID:{cid}")  # ← CORREGIDO
 
-            # Obtener pagos a operadores
+            # Obtener pagos con DICT (no kwargs)
+            filtros_pagos = {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin}
+            if operador_id:
+                filtros_pagos["operador_id"] = operador_id
             try:
-                pagos = self.fm.obtener_pagos_operadores(
-                    operador_id=operador_id,
-                    fecha_inicio=fecha_inicio,
-                    fecha_fin=fecha_fin
-                ) or []
+                pagos = self.fm.obtener_pagos_operadores(filtros_pagos) or []
             except Exception as e:
                 logger.warning(f"No se pudieron obtener pagos: {e}")
                 pagos = []
@@ -271,7 +263,7 @@ class DialogoReporteOperadoresFirebase(QDialog):
             total_facturado = sum(float(a.get("monto", 0) or 0) for a in alquileres)
             total_pagado = sum(float(p.get("monto", 0) or 0) for p in pagos)
 
-            # Preparar datos para PDF
+            # Preparar ReportGenerator
             from report_generator import ReportGenerator
 
             titulo = f"REPORTE DE OPERADORES - {operador_nombre.upper()}"
@@ -285,7 +277,6 @@ class DialogoReporteOperadoresFirebase(QDialog):
                 "monto": "Monto",
             }
 
-            # Obtener storage_manager
             storage_manager = None
             if hasattr(self.fm, 'storage_manager'):
                 storage_manager = self.fm.storage_manager
@@ -302,41 +293,26 @@ class DialogoReporteOperadoresFirebase(QDialog):
                 column_map=column_map
             )
 
-            # Agregar resumen de operadores al final
-            rg.total_facturado = total_facturado
-            rg.total_abonado = total_pagado
-            rg.saldo = total_facturado - total_pagado
-
-            # Agregar datos custom para operadores
+            # Asignar datos para el método de operadores
+            rg.pagos_operador = pagos       # campo "horas" en cada pago
             rg.total_horas = total_horas
-            rg.pagos = pagos
+            rg.total_pagado = total_pagado
+            rg.total_facturado = total_facturado
 
-            # Generar PDF
-            exito, error = rg.to_pdf(file_path)
+            # Generar con método dedicado
+            exito, error = rg.to_pdf_operadores(file_path)
 
             if exito:
-                QMessageBox.information(
-                    self,
-                    "Éxito",
-                    f"Reporte generado exitosamente:\n{file_path}"
-                )
+                QMessageBox.information(self, "Éxito", f"Reporte generado exitosamente:\n{file_path}")
                 self.accept()
             else:
-                QMessageBox.critical(
-                    self,
-                    "Error",
-                    f"No se pudo generar el reporte:\n{error}"
-                )
+                QMessageBox.critical(self, "Error", f"No se pudo generar el reporte:\n{error}")
 
         except Exception as e:
             import traceback
             traceback.print_exc()
             logger.error(f"Error generando PDF operadores: {e}", exc_info=True)
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"Error generando el reporte:\n{e}"
-            )
+            QMessageBox.critical(self, "Error", f"Error generando el reporte:\n{e}")
 
     def exportar_excel(self):
         """Genera el Excel del reporte de operadores"""

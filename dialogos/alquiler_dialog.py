@@ -77,7 +77,7 @@ class AlquilerDialog(QDialog):
         self.conduce_storage_path = None
         
         self.setWindowTitle("Nuevo Alquiler" if not self.alquiler_id else "Editar Alquiler")
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(480)
         
         self._init_ui()
         self._cargar_combos()
@@ -87,43 +87,70 @@ class AlquilerDialog(QDialog):
     
     def _init_ui(self):
         """Inicializa la interfaz del diálogo con soporte de modalidades."""
+        # Stylesheet local para sobreescribir el tema global y hacer el diálogo compacto
+        self.setStyleSheet("""
+            AlquilerDialog QLineEdit,
+            AlquilerDialog QComboBox,
+            AlquilerDialog QDateEdit,
+            AlquilerDialog QSpinBox,
+            AlquilerDialog QDoubleSpinBox {
+                min-height: 0px;
+                padding: 3px 6px;
+            }
+            AlquilerDialog QPushButton {
+                min-height: 0px;
+                padding: 4px 10px;
+            }
+        """)
+
         layout = QVBoxLayout(self)
+        layout.setSpacing(4)
+        layout.setContentsMargins(8, 8, 8, 8)
 
         # Formulario principal
         form_layout = QFormLayout()
+        form_layout.setSpacing(4)
+        form_layout.setContentsMargins(0, 0, 0, 0)
 
         # Fecha
         self.date_fecha = QDateEdit(calendarPopup=True)
         self.date_fecha.setDisplayFormat("yyyy-MM-dd")
         self.date_fecha.setDate(QDate.currentDate())
+        self.date_fecha.setFixedHeight(26)
         form_layout.addRow("Fecha:", self.date_fecha)
 
         # Cliente
         self.combo_cliente = QComboBox()
-        self.combo_cliente.setMinimumWidth(250)
+        self.combo_cliente.setMinimumWidth(200)
+        self.combo_cliente.setFixedHeight(26)
         form_layout.addRow("Cliente:", self.combo_cliente)
 
         # Operador
         self.combo_operador = QComboBox()
-        self.combo_operador.setMinimumWidth(250)
+        self.combo_operador.setMinimumWidth(200)
+        self.combo_operador.setFixedHeight(26)
         form_layout.addRow("Operador:", self.combo_operador)
 
         # Equipo
         self.combo_equipo = QComboBox()
-        self.combo_equipo.setMinimumWidth(250)
+        self.combo_equipo.setMinimumWidth(200)
+        self.combo_equipo.setFixedHeight(26)
         form_layout.addRow("Equipo:", self.combo_equipo)
 
         # Conduce
         self.txt_conduce = QLineEdit()
+        self.txt_conduce.setFixedHeight(26)
         form_layout.addRow("Conduce:", self.txt_conduce)
 
         # Ubicación
         self.txt_ubicacion = QLineEdit()
+        self.txt_ubicacion.setFixedHeight(26)
         form_layout.addRow("Ubicación:", self.txt_ubicacion)
 
         # --- Modalidad de facturación ---
         self.combo_modalidad = QComboBox()
         self.combo_modalidad.addItems(["Horas", "Volumen", "Fijo"])
+        self.combo_modalidad.setFixedHeight(26)
         form_layout.addRow("Modalidad:", self.combo_modalidad)
 
         # Grupo Horas
@@ -131,6 +158,7 @@ class AlquilerDialog(QDialog):
         self.spin_horas.setRange(0, 1000)
         self.spin_horas.setDecimals(2)
         self.spin_horas.setValue(0)
+        self.spin_horas.setFixedHeight(26)
         self.spin_horas.valueChanged.connect(self._calcular_monto)
         form_layout.addRow("Horas:", self.spin_horas)
 
@@ -138,6 +166,7 @@ class AlquilerDialog(QDialog):
         self.spin_precio_hora.setRange(0, 999999)
         self.spin_precio_hora.setDecimals(2)
         self.spin_precio_hora.setValue(0)
+        self.spin_precio_hora.setFixedHeight(26)
         self.spin_precio_hora.valueChanged.connect(self._calcular_monto)
         form_layout.addRow("Precio/Hora:", self.spin_precio_hora)
 
@@ -146,17 +175,20 @@ class AlquilerDialog(QDialog):
         self.spin_volumen.setRange(0, 1000000)
         self.spin_volumen.setDecimals(2)
         self.spin_volumen.setValue(0)
+        self.spin_volumen.setFixedHeight(26)
         self.spin_volumen.valueChanged.connect(self._calcular_monto)
         form_layout.addRow("Volumen:", self.spin_volumen)
 
         self.txt_unidad_volumen = QLineEdit()
         self.txt_unidad_volumen.setPlaceholderText("m3 / ton / m2 / yd3 ...")
+        self.txt_unidad_volumen.setFixedHeight(26)
         form_layout.addRow("Unidad Vol:", self.txt_unidad_volumen)
 
         self.spin_precio_unidad = QDoubleSpinBox()
         self.spin_precio_unidad.setRange(0, 9999999)
         self.spin_precio_unidad.setDecimals(2)
         self.spin_precio_unidad.setValue(0)
+        self.spin_precio_unidad.setFixedHeight(26)
         self.spin_precio_unidad.valueChanged.connect(self._calcular_monto)
         form_layout.addRow("Precio/Unidad:", self.spin_precio_unidad)
 
@@ -165,6 +197,7 @@ class AlquilerDialog(QDialog):
         self.spin_monto_fijo.setRange(0, 999999999)
         self.spin_monto_fijo.setDecimals(2)
         self.spin_monto_fijo.setValue(0)
+        self.spin_monto_fijo.setFixedHeight(26)
         self.spin_monto_fijo.valueChanged.connect(self._calcular_monto)
         form_layout.addRow("Monto Fijo:", self.spin_monto_fijo)
 
@@ -181,23 +214,29 @@ class AlquilerDialog(QDialog):
         # --- Sección de CONDUCE ---
         conduce_group = QGroupBox("Conduce")
         conduce_layout = QVBoxLayout()
+        conduce_layout.setSpacing(3)
+        conduce_layout.setContentsMargins(6, 6, 6, 6)
 
         self.lbl_conduce_estado = QLabel("Sin archivo adjunto")
         conduce_layout.addWidget(self.lbl_conduce_estado)
 
         btns_conduce_layout = QHBoxLayout()
-        self.btn_seleccionar_conduce = QPushButton("📎 Adjuntar Conduce")
+        btns_conduce_layout.setSpacing(4)
+        self.btn_seleccionar_conduce = QPushButton("Adjuntar")
+        self.btn_seleccionar_conduce.setFixedHeight(28)
         self.btn_seleccionar_conduce.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
         self.btn_seleccionar_conduce.clicked.connect(self._seleccionar_conduce)
         btns_conduce_layout.addWidget(self.btn_seleccionar_conduce)
 
-        self.btn_ver_conduce = QPushButton("👁️ Ver Conduce")
+        self.btn_ver_conduce = QPushButton("Ver")
+        self.btn_ver_conduce.setFixedHeight(28)
         self.btn_ver_conduce.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
         self.btn_ver_conduce.clicked.connect(self._ver_conduce)
         self.btn_ver_conduce.setEnabled(False)
         btns_conduce_layout.addWidget(self.btn_ver_conduce)
 
-        self.btn_eliminar_conduce = QPushButton("🗑️ Eliminar")
+        self.btn_eliminar_conduce = QPushButton("Eliminar")
+        self.btn_eliminar_conduce.setFixedHeight(28)
         self.btn_eliminar_conduce.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
         self.btn_eliminar_conduce.clicked.connect(self._eliminar_conduce)
         self.btn_eliminar_conduce.setEnabled(False)
@@ -216,12 +255,15 @@ class AlquilerDialog(QDialog):
 
         # Botones principales
         botones_layout = QHBoxLayout()
-        self.btn_guardar = QPushButton("💾 Guardar")
+        botones_layout.setSpacing(6)
+        self.btn_guardar = QPushButton("Guardar")
+        self.btn_guardar.setFixedHeight(30)
         self.btn_guardar.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.btn_guardar.clicked.connect(self._guardar)
         botones_layout.addWidget(self.btn_guardar)
 
-        btn_cancelar = QPushButton("✖️ Cancelar")
+        btn_cancelar = QPushButton("Cancelar")
+        btn_cancelar.setFixedHeight(30)
         btn_cancelar.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogCancelButton))
         btn_cancelar.clicked.connect(self.reject)
         botones_layout.addWidget(btn_cancelar)
@@ -412,6 +454,18 @@ class AlquilerDialog(QDialog):
             datos['monto'] = monto_visual
         except Exception:
             pass
+
+        # Fecha de vencimiento automática: 45 días desde la fecha del alquiler
+        # Solo la asignamos si el alquiler no está marcado como pagado
+        if not datos.get('pagado'):
+            try:
+                from datetime import datetime, timedelta
+                dt_fecha = datetime.strptime(datos['fecha'], "%Y-%m-%d")
+                datos['fecha_vencimiento_pago'] = (
+                    dt_fecha + timedelta(days=45)
+                ).strftime("%Y-%m-%d")
+            except Exception:
+                pass
 
         # Conduce (si ya se subió)
         if self.conduce_url:

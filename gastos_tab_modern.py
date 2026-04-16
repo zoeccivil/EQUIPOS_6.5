@@ -24,6 +24,7 @@ from dialogos.gasto_dialog import GastoDialog
 from reporte_gastos import ReporteGastos
 from icon_loader import load_svg_icon
 from app_theme_modern import ModernTheme
+from delegates_inline import DateDelegate, ComboDelegate, TextDelegate, NumericDelegate
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +318,7 @@ class GastosTabModern(QWidget):
         
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tabla.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tabla.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setAlternatingRowColors(False)
         self.tabla.setShowGrid(False)
@@ -365,9 +366,32 @@ class GastosTabModern(QWidget):
         
         layout.addWidget(self.tabla)
         card.add_layout(layout)
-        
+
+        # ── Delegates de edición inline ──────────────────────────────────────
+        # Se instancian aquí con mapas vacíos; se actualizan en actualizar_mapas()
+        moneda = (self.config or {}).get('app', {}).get('moneda', 'RD$')
+        self._delegate_fecha    = DateDelegate(self._guardar_cambio_inline_gasto, self)
+        self._delegate_equipo   = ComboDelegate({}, self._guardar_cambio_inline_gasto, self)
+        self._delegate_cuenta   = ComboDelegate({}, self._guardar_cambio_inline_gasto, self)
+        self._delegate_cat      = ComboDelegate({}, self._guardar_cambio_inline_gasto, self)
+        self._delegate_subcat   = ComboDelegate({}, self._guardar_cambio_inline_gasto, self)
+        self._delegate_desc     = TextDelegate(self._guardar_cambio_inline_gasto, self)
+        self._delegate_monto    = NumericDelegate(self._guardar_cambio_inline_gasto, prefix=moneda, parent=self)
+        self._delegate_coment   = TextDelegate(self._guardar_cambio_inline_gasto, self)
+
+        self.tabla.setItemDelegateForColumn(0, self._delegate_fecha)
+        self.tabla.setItemDelegateForColumn(1, self._delegate_equipo)
+        self.tabla.setItemDelegateForColumn(2, self._delegate_cuenta)
+        self.tabla.setItemDelegateForColumn(3, self._delegate_cat)
+        self.tabla.setItemDelegateForColumn(4, self._delegate_subcat)
+        self.tabla.setItemDelegateForColumn(5, self._delegate_desc)
+        self.tabla.setItemDelegateForColumn(6, self._delegate_monto)
+        self.tabla.setItemDelegateForColumn(7, self._delegate_coment)
+        # col 8 (adjunto): sin delegate → no editable
+        # ────────────────────────────────────────────────────────────────────
+
         return card
-    
+
     def _conectar_senales(self):
         """Conecta todas las señales"""
         # Botones
@@ -389,7 +413,7 @@ class GastosTabModern(QWidget):
         self.tabla.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabla.customContextMenuRequested.connect(self._mostrar_menu_contextual)
         self.tabla.cellClicked.connect(self._handle_cell_click)
-        self.tabla.itemDoubleClicked.connect(self.editar_gasto_seleccionado)
+        # Doble-click activa el delegate inline; menú contextual sigue ofreciendo "Editar" (diálogo completo)
     
     # =========================================================================================
     # SECCIÓN: Actualización de mapas
@@ -445,13 +469,19 @@ class GastosTabModern(QWidget):
             self.combo_subcategoria_gastos.clear()
             self.combo_subcategoria_gastos.addItem("Todas las Subcategorías", None)
             self.combo_subcategoria_gastos.blockSignals(False)
-            
+
+            # Actualizar mapas de delegates inline
+            self._delegate_equipo.update_map({str(k): v for k, v in self.equipos_mapa.items()})
+            self._delegate_cuenta.update_map({str(k): v for k, v in self.cuentas_mapa.items()})
+            self._delegate_cat.update_map({str(k): v for k, v in self.categorias_mapa.items()})
+            self._delegate_subcat.update_map({str(k): v for k, v in self.subcategorias_mapa.items()})
+
             # Inicializar fechas
             self._inicializar_fechas_filtro()
-            
+
             # Primera carga
             self._recargar_por_fecha()
-            
+
         except Exception as e:
             logger.error(f"Error poblando filtros gastos: {e}", exc_info=True)
             QMessageBox.warning(self, "Error", f"No se pudieron cargar filtros:\n{e}")
@@ -731,9 +761,58 @@ class GastosTabModern(QWidget):
                 QMessageBox.critical(self, "Error", f"No se pudo eliminar:\n{e}")
     
     # =========================================================================================
+    # SECCIÓN: Guardado inline (callback de delegates)
+    # =========================================================================================
+
+    def _guardar_cambio_inline_gasto(self, row: int, col: int, value):
+        """
+        Callback llamado por los delegates después de que el usuario confirma un cambio.
+        Mapea (row, col) → (gasto_id, campo_firebase) y persiste en Firestore.
+        """
+        # Obtener gasto_id desde col 0
+        item_fecha = self.tabla.item(row, 0)
+        if not item_fecha:
+            return
+        gasto_id = item_fecha.data(Qt.ItemDataRole.UserRole)
+        if not gasto_id:
+            logger.warning("inline_gasto: no hay gasto_id en la fila")
+            return
+
+        col_to_field = {
+            0: "fecha",
+            1: "equipo_id",
+            2: "cuenta_id",
+            3: "categoria_id",
+            4: "subcategoria_id",
+            5: "descripcion",
+            6: "monto",
+            7: "comentario",
+        }
+        campo = col_to_field.get(col)
+        if not campo:
+            return
+
+        try:
+            self.fm.actualizar_gasto(gasto_id, {campo: value})
+            # Actualizar en memoria para que los filtros sean coherentes
+            for g in self.gastos_base:
+                if g.get("id") == gasto_id:
+                    g[campo] = value
+                    break
+            for g in self.gastos_filtrados:
+                if g.get("id") == gasto_id:
+                    g[campo] = value
+                    break
+            self.recargar_dashboard.emit()
+            logger.info(f"inline_gasto: {gasto_id} → {campo}={value!r}")
+        except Exception as e:
+            logger.error(f"Error guardando inline gasto {gasto_id}: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"No se pudo guardar el cambio:\n{e}")
+
+    # =========================================================================================
     # SECCIÓN: Menú contextual y adjuntos
     # =========================================================================================
-    
+
     def _mostrar_menu_contextual(self, pos: QPoint):
         """Muestra menú contextual con opciones CRUD"""
         menu = QMenu(self)

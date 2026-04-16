@@ -20,6 +20,7 @@ from ui_components import FilterBar, ModernButton, ModernDatePicker, ActionButto
 from firebase_manager import FirebaseManager
 from storage_manager import StorageManager
 from dialogos.alquiler_dialog import AlquilerDialog
+from delegates_inline import DateDelegate, ComboDelegate, TextDelegate, NumericDelegate
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class RegistroAlquileresTabModern(QWidget):
         self.tabla.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabla.customContextMenuRequested.connect(self._mostrar_menu_contextual)
         self.tabla.cellClicked.connect(self._handle_cell_click)
-        self.tabla.itemDoubleClicked.connect(self._editar_alquiler_seleccionado)
+        # Doble-click activa el delegate inline; menú contextual ofrece "Editar" (diálogo completo)
     
     def _crear_filtros(self) -> FilterBar:
         """Crea la barra de filtros"""
@@ -237,7 +238,7 @@ class RegistroAlquileresTabModern(QWidget):
                 
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tabla.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tabla.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.setAlternatingRowColors(False)
         self.tabla.setShowGrid(False)
@@ -287,9 +288,29 @@ class RegistroAlquileresTabModern(QWidget):
         
         layout.addWidget(self.tabla)
         card.add_layout(layout)
-        
+
+        # ── Delegates de edición inline ──────────────────────────────────────
+        moneda = (self.config or {}).get('app', {}).get('moneda', 'RD$')
+        self._delegate_fecha_alq    = DateDelegate(self._guardar_cambio_inline_alquiler, self)
+        self._delegate_cliente      = ComboDelegate({}, self._guardar_cambio_inline_alquiler, self)
+        self._delegate_equipo_alq   = ComboDelegate({}, self._guardar_cambio_inline_alquiler, self)
+        self._delegate_operador     = ComboDelegate({}, self._guardar_cambio_inline_alquiler, self)
+        self._delegate_conduce      = TextDelegate(self._guardar_cambio_inline_alquiler, self)
+        self._delegate_cantidad     = NumericDelegate(self._guardar_cambio_inline_alquiler, prefix="", parent=self)
+        self._delegate_precio       = NumericDelegate(self._guardar_cambio_inline_alquiler, prefix="", parent=self)
+        # col 7 (Monto), 8 (Estado), 9 (C📄): no editables inline
+
+        self.tabla.setItemDelegateForColumn(0, self._delegate_fecha_alq)
+        self.tabla.setItemDelegateForColumn(1, self._delegate_cliente)
+        self.tabla.setItemDelegateForColumn(2, self._delegate_equipo_alq)
+        self.tabla.setItemDelegateForColumn(3, self._delegate_operador)
+        self.tabla.setItemDelegateForColumn(4, self._delegate_conduce)
+        self.tabla.setItemDelegateForColumn(5, self._delegate_cantidad)
+        self.tabla.setItemDelegateForColumn(6, self._delegate_precio)
+        # ────────────────────────────────────────────────────────────────────
+
         return card
-    
+
     # =========================================================================================
     # SECCIÓN: Población de filtros y actualización de mapas
     # =========================================================================================
@@ -327,6 +348,11 @@ class RegistroAlquileresTabModern(QWidget):
                 self.combo_operador.addItem(nombre, oid)
             self.combo_operador.blockSignals(False)
             
+            # Actualizar mapas de delegates inline
+            self._delegate_cliente.update_map({str(k): v for k, v in self.clientes_mapa.items()})
+            self._delegate_equipo_alq.update_map({str(k): v for k, v in self.equipos_mapa.items()})
+            self._delegate_operador.update_map({str(k): v for k, v in self.operadores_mapa.items()})
+
             # Inicializar fechas dinámicas
             self._inicializar_fechas_filtro()
             
@@ -593,6 +619,97 @@ class RegistroAlquileresTabModern(QWidget):
         if alquiler_id:
             self.abrir_dialogo_alquiler(alquiler_id)
     
+    # =========================================================================================
+    # SECCIÓN: Guardado inline (callback de delegates)
+    # =========================================================================================
+
+    def _guardar_cambio_inline_alquiler(self, row: int, col: int, value):
+        """
+        Callback llamado por los delegates después de que el usuario confirma un cambio.
+        Mapea (row, col) → (alquiler_id, campo_firebase) y persiste en Firestore.
+        Para columnas de Cantidad y Precio también recalcula el monto.
+        """
+        item_fecha = self.tabla.item(row, 0)
+        if not item_fecha:
+            return
+        alquiler_id = item_fecha.data(Qt.ItemDataRole.UserRole)
+        if not alquiler_id:
+            logger.warning("inline_alquiler: no hay alquiler_id en la fila")
+            return
+
+        # Obtener alquiler en memoria para saber la modalidad
+        alq = next((a for a in self.alquileres_filtrados if a.get("id") == alquiler_id), None)
+        modalidad = (alq.get("modalidad_facturacion") or "horas").strip().lower() if alq else "horas"
+
+        # Mapa directo para columnas no dependientes de modalidad
+        col_to_field = {
+            0: "fecha",
+            1: "cliente_id",
+            2: "equipo_id",
+            3: "operador_id",
+            4: "conduce",
+        }
+
+        if col in col_to_field:
+            campo = col_to_field[col]
+            updates = {campo: value}
+        elif col == 5:
+            # Cantidad: horas o volumen según modalidad
+            if modalidad == "volumen":
+                campo = "volumen_generado"
+            elif modalidad == "fijo":
+                return  # Cantidad no aplica para fijo
+            else:
+                campo = "horas"
+            updates = {campo: value}
+            # Recalcular monto
+            precio_actual = float((alq or {}).get(
+                "precio_por_unidad" if modalidad == "volumen" else "precio_por_hora", 0) or 0)
+            updates["monto"] = value * precio_actual
+        elif col == 6:
+            # Precio: precio_por_hora, precio_por_unidad o monto_fijo según modalidad
+            if modalidad == "volumen":
+                campo = "precio_por_unidad"
+            elif modalidad == "fijo":
+                campo = "monto_fijo"
+                updates = {campo: value, "monto": value}
+            else:
+                campo = "precio_por_hora"
+            if modalidad != "fijo":
+                cantidad_actual = float((alq or {}).get(
+                    "volumen_generado" if modalidad == "volumen" else "horas", 0) or 0)
+                updates = {campo: value, "monto": cantidad_actual * value}
+        else:
+            return
+
+        try:
+            self.fm.editar_alquiler(alquiler_id, updates)
+            # Actualizar en memoria
+            if alq:
+                alq.update(updates)
+            for a in self.alquileres_cargados:
+                if a.get("id") == alquiler_id:
+                    a.update(updates)
+                    break
+            # Si hay monto nuevo, refrescar la celda visualmente
+            if "monto" in updates:
+                moneda = self.config.get('app', {}).get('moneda', 'RD$')
+                from PyQt6.QtWidgets import QTableWidgetItem
+                from PyQt6.QtGui import QFont
+                monto_item = QTableWidgetItem(f"{moneda} {updates['monto']:,.2f}")
+                monto_item.setFont(QFont("monospace", 11))
+                from PyQt6.QtCore import Qt
+                monto_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.tabla.setItem(row, 7, monto_item)
+                # Refrescar totales
+                total = sum(float(a.get("monto", 0) or 0) for a in self.alquileres_filtrados)
+                self.lbl_total_monto.setText(f"Monto Total: {moneda} {total:,.2f}")
+            self.recargar_dashboard.emit()
+            logger.info(f"inline_alquiler: {alquiler_id} → {updates}")
+        except Exception as e:
+            logger.error(f"Error guardando inline alquiler {alquiler_id}: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"No se pudo guardar el cambio:\n{e}")
+
     def _eliminar_alquiler(self, alquiler: Dict[str, Any]):
         """Elimina un alquiler tras confirmación"""
         alquiler_id = alquiler.get('id')

@@ -544,7 +544,6 @@ class WhatsAppIntegration(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             # Recargar configuración
             self.config = dialog.get_config()
-            guardar_configuracion(self.config)
             self.whatsapp_manager = WhatsAppManager(self.config)
             self._verificar_conexion()
     
@@ -716,9 +715,10 @@ class WhatsAppIntegration(QWidget):
         
         # Guardar en configuración
         self.config['whatsapp']['recordatorios_auto'] = config
-
+        
+        # Guardar en Firebase o archivo local
         try:
-            guardar_configuracion(self.config)
+            # Aquí guardarías en tu sistema de configuración
             QMessageBox.information(
                 self,
                 "Configuración Guardada",

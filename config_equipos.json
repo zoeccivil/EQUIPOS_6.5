@@ -13,6 +13,32 @@
   "app": {
     "tema": "claro",
     "idioma": "es",
-    "ventana_maximizada": false
+    "ventana_maximizada": false,
+    "moneda": "RD$",
+    "formato_fecha": "yyyy-MM-dd"
+  },
+  "whatsapp": {
+    "greenapi_instance_id": "7103515774",
+    "greenapi_token": "cf353e2c33934955b159fccad769f01afb674393c9d74d08a6",
+    "telefono_contable": "",
+    "provider": "twilio",
+    "twilio_account_sid": "",
+    "twilio_auth_token": "",
+    "twilio_from": "",
+    "api_token": "",
+    "phone_id": "",
+    "recordatorios_auto": {
+      "activo": false,
+      "dias_antes": 3,
+      "hora": "09:00"
+    }
+  },
+  "reportes": {
+    "empresa": "",
+    "rnc": "",
+    "direccion": "",
+    "telefono": "",
+    "email": "",
+    "logo_path": ""
   }
 }

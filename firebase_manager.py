@@ -1587,6 +1587,167 @@ class FirebaseManager:
             logger.error(f"ensure_categoria_y_subcategoria_pago_operador error: {e}", exc_info=True)
             return None, None
 
+    # ── CRUD completo para Categorías y Subcategorías ────────────────────────
+
+    def obtener_categorias(self) -> list[dict]:
+        """Lista todas las categorías ordenadas por nombre."""
+        try:
+            out = []
+            for doc in self.db.collection("categorias").stream():
+                d = doc.to_dict() or {}
+                out.append({"id": str(doc.id), "nombre": d.get("nombre", "")})
+            return sorted(out, key=lambda x: x["nombre"].upper())
+        except Exception as e:
+            logger.error(f"obtener_categorias error: {e}", exc_info=True)
+            return []
+
+    def crear_categoria(self, nombre: str) -> str:
+        """Crea una categoría nueva y retorna su ID."""
+        ref = self.db.collection("categorias").document()
+        ref.set({"nombre": nombre.strip()})
+        return str(ref.id)
+
+    def actualizar_categoria(self, cat_id: str, nombre: str) -> None:
+        self.db.collection("categorias").document(str(cat_id)).update({"nombre": nombre.strip()})
+
+    def eliminar_categoria(self, cat_id: str) -> None:
+        self.db.collection("categorias").document(str(cat_id)).delete()
+
+    def obtener_subcategorias(self, categoria_id: str | None = None) -> list[dict]:
+        """Lista subcategorías; si categoria_id se da, filtra por ella."""
+        try:
+            out = []
+            for doc in self.db.collection("subcategorias").stream():
+                d = doc.to_dict() or {}
+                cid = str(d.get("categoria_id") or "")
+                if categoria_id is not None and cid != str(categoria_id):
+                    continue
+                out.append({
+                    "id": str(doc.id),
+                    "nombre": d.get("nombre", ""),
+                    "categoria_id": cid,
+                })
+            return sorted(out, key=lambda x: x["nombre"].upper())
+        except Exception as e:
+            logger.error(f"obtener_subcategorias error: {e}", exc_info=True)
+            return []
+
+    def crear_subcategoria(self, nombre: str, categoria_id: str) -> str:
+        """Crea una subcategoría nueva y retorna su ID."""
+        ref = self.db.collection("subcategorias").document()
+        ref.set({"nombre": nombre.strip(), "categoria_id": str(categoria_id)})
+        return str(ref.id)
+
+    def actualizar_subcategoria(self, sub_id: str, nombre: str, categoria_id: str) -> None:
+        self.db.collection("subcategorias").document(str(sub_id)).update(
+            {"nombre": nombre.strip(), "categoria_id": str(categoria_id)}
+        )
+
+    def eliminar_subcategoria(self, sub_id: str) -> None:
+        self.db.collection("subcategorias").document(str(sub_id)).delete()
+
+    def contar_gastos_por_categoria(self, cat_id: str) -> int:
+        """Cuenta cuántos gastos usan esta categoría (para advertir al eliminar)."""
+        try:
+            count = 0
+            for doc in self.db.collection("gastos").stream():
+                if str(doc.to_dict().get("categoria_id", "")) == str(cat_id):
+                    count += 1
+            return count
+        except Exception as e:
+            logger.error(f"contar_gastos_por_categoria error: {e}", exc_info=True)
+            return 0
+
+    def contar_gastos_por_subcategoria(self, sub_id: str) -> int:
+        """Cuenta cuántos gastos usan esta subcategoría."""
+        try:
+            count = 0
+            for doc in self.db.collection("gastos").stream():
+                if str(doc.to_dict().get("subcategoria_id", "")) == str(sub_id):
+                    count += 1
+            return count
+        except Exception as e:
+            logger.error(f"contar_gastos_por_subcategoria error: {e}", exc_info=True)
+            return 0
+
+    def reasignar_categoria_en_gastos(self, old_id: str, new_id: str | None) -> int:
+        """Cambia categoria_id (y limpia subcategoria_id) en gastos que usen old_id."""
+        count = 0
+        try:
+            for doc in self.db.collection("gastos").stream():
+                if str(doc.to_dict().get("categoria_id", "")) == str(old_id):
+                    upd = {"categoria_id": new_id}
+                    if new_id is None:
+                        upd["subcategoria_id"] = None
+                    doc.reference.update(upd)
+                    count += 1
+        except Exception as e:
+            logger.error(f"reasignar_categoria_en_gastos error: {e}", exc_info=True)
+        return count
+
+    def reasignar_subcategoria_en_gastos(self, old_id: str, new_id: str | None) -> int:
+        """Cambia subcategoria_id en gastos que usen old_id."""
+        count = 0
+        try:
+            for doc in self.db.collection("gastos").stream():
+                if str(doc.to_dict().get("subcategoria_id", "")) == str(old_id):
+                    doc.reference.update({"subcategoria_id": new_id})
+                    count += 1
+        except Exception as e:
+            logger.error(f"reasignar_subcategoria_en_gastos error: {e}", exc_info=True)
+        return count
+
+    def auditar_gastos_categorias(self, cat_ids: set, sub_ids: set) -> list[dict]:
+        """
+        Retorna gastos con categoria_id o subcategoria_id que no existen
+        en las colecciones actuales (referencias rotas).
+        """
+        try:
+            problemas = []
+            for doc in self.db.collection("gastos").stream():
+                d = doc.to_dict() or {}
+                cid = str(d.get("categoria_id") or "")
+                sid = str(d.get("subcategoria_id") or "")
+                issues = []
+                if cid and cid not in cat_ids:
+                    issues.append(("categoria", cid))
+                if sid and sid not in sub_ids:
+                    issues.append(("subcategoria", sid))
+                if issues:
+                    problemas.append({
+                        "id": doc.id,
+                        "fecha": d.get("fecha", ""),
+                        "descripcion": d.get("descripcion", "") or "",
+                        "monto": float(d.get("monto") or 0),
+                        "categoria_id": cid,
+                        "subcategoria_id": sid,
+                        "issues": issues,
+                    })
+            return sorted(problemas, key=lambda x: x["fecha"])
+        except Exception as e:
+            logger.error(f"auditar_gastos_categorias error: {e}", exc_info=True)
+            return []
+
+    def auditar_subcategorias_huerfanas(self, cat_ids: set) -> list[dict]:
+        """Retorna subcategorías cuya categoria_id no existe en categorias."""
+        try:
+            huerfanas = []
+            for doc in self.db.collection("subcategorias").stream():
+                d = doc.to_dict() or {}
+                cid = str(d.get("categoria_id") or "")
+                if cid and cid not in cat_ids:
+                    huerfanas.append({
+                        "id": doc.id,
+                        "nombre": d.get("nombre", ""),
+                        "categoria_id_rota": cid,
+                    })
+            return sorted(huerfanas, key=lambda x: x["nombre"].upper())
+        except Exception as e:
+            logger.error(f"auditar_subcategorias_huerfanas error: {e}", exc_info=True)
+            return []
+
+    # ─────────────────────────────────────────────────────────────────────────
+
     def obtener_cliente_y_ubicacion_equipo_actual(self, equipo_id: str) -> dict | None:
         """
         Busca el último alquiler del equipo para inferir cliente y ubicación actuales.

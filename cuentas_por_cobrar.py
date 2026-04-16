@@ -1,917 +1,959 @@
 # cuentas_por_cobrar.py
 
 """
-Cuentas por Cobrar - Gestión de cobros y seguimiento de pagos pendientes
-Permite visualizar deudas, enviar recordatorios y gestionar estados de cuenta
+Cuentas por Cobrar — Gestión de cobros y seguimiento de pagos pendientes.
+Lee alquileres de Firestore, suma los pagos de cada subcolección
+alquileres/{id}/pagos y calcula el saldo real de cada factura.
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QDialog, QFormLayout, QLineEdit, QDoubleSpinBox, QDateEdit,
     QComboBox, QMessageBox, QAbstractItemView, QGroupBox, QFrame,
-    QTextEdit, QFileDialog, QProgressBar, QCheckBox
+    QTextEdit,
 )
-from PyQt6.QtCore import Qt, QDate, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QBrush
+from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtGui import QColor, QBrush
 import logging
+import uuid
 from datetime import datetime, timedelta
 from firebase_manager import FirebaseManager
 
 logger = logging.getLogger(__name__)
 
-# Estilos CSS
+# ── Estilos ────────────────────────────────────────────────────────────────────
 CUENTAS_STYLE = """
-QWidget {
-    background-color: #F3F4F6;
-    font-family: 'Segoe UI';
-}
-QLabel[class="title"] {
-    font-size: 20pt;
-    font-weight: bold;
-    color: #1F2937;
-}
-QLabel[class="deuda-label"] {
-    font-size: 11pt;
-    color: #6B7280;
-    font-weight: 500;
-}
-QLabel[class="deuda-value"] {
-    font-size: 24pt;
-    font-weight: bold;
-}
-QLabel[class="deuda-vencida"] {
-    color: #DC2626;
-}
-QLabel[class="deuda-por-vencer"] {
-    color: #F59E0B;
-}
-QLabel[class="deuda-al-dia"] {
-    color: #059669;
-}
-QFrame[class="deuda-card"] {
-    background-color: #FFFFFF;
-    border: 2px solid #E5E7EB;
-    border-radius: 12px;
-    padding: 20px;
-}
-QFrame[class="deuda-card-vencida"] {
-    background-color: #FFFFFF;
-    border: 3px solid #DC2626;
-    border-radius: 12px;
-    padding: 20px;
-}
-QFrame[class="deuda-card-advertencia"] {
-    background-color: #FFFFFF;
-    border: 3px solid #F59E0B;
-    border-radius: 12px;
-    padding: 20px;
-}
-QPushButton {
-    background-color: #F59E0B;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 10px 18px;
-    font-size: 10pt;
-    font-weight: 600;
-    min-height: 25px;
-}
-QPushButton:hover {
-    background-color: #D97706;
-}
-QPushButton:pressed {
-    background-color: #B45309;
-}
-QPushButton[class="secondary"] {
-    background-color: #E5E7EB;
-    color: #374151;
-}
-QPushButton[class="secondary"]:hover {
-    background-color: #D1D5DB;
-}
-QPushButton[class="danger"] {
-    background-color: #DC2626;
-    color: white;
-}
-QPushButton[class="danger"]:hover {
-    background-color: #B91C1C;
-}
-QPushButton[class="success"] {
-    background-color: #059669;
-    color: white;
-}
-QPushButton[class="success"]:hover {
-    background-color: #047857;
-}
-QTableWidget {
-    background-color: #FFFFFF;
-    alternate-background-color: #F9FAFB;
-    gridline-color: #E5E7EB;
-    selection-background-color: #FEF3C7;
-    selection-color: #1F2937;
-    border: 1px solid #E5E7EB;
-    border-radius: 6px;
-}
-QTableWidget::item {
-    padding: 8px;
-}
-QHeaderView::section {
-    background-color: #1F2937;
-    color: #FFFFFF;
-    padding: 10px;
-    border: none;
-    font-weight: 600;
-}
+QWidget { background-color: #F3F4F6; font-family: 'Segoe UI'; }
+QLabel[class="title"]       { font-size: 20pt; font-weight: bold; color: #1F2937; }
+QLabel[class="deuda-label"] { font-size: 11pt; color: #6B7280; font-weight: 500; }
+QLabel[class="deuda-value"] { font-size: 22pt; font-weight: bold; }
+QLabel[class="deuda-vencida"]    { color: #DC2626; }
+QLabel[class="deuda-por-vencer"] { color: #F59E0B; }
+QLabel[class="deuda-al-dia"]     { color: #059669; }
+QFrame[class="deuda-card"]           { background-color:#FFFFFF; border:2px solid #E5E7EB; border-radius:12px; padding:20px; }
+QFrame[class="deuda-card-vencida"]   { background-color:#FFFFFF; border:3px solid #DC2626; border-radius:12px; padding:20px; }
+QFrame[class="deuda-card-advertencia"]{ background-color:#FFFFFF; border:3px solid #F59E0B; border-radius:12px; padding:20px; }
+QPushButton { background-color:#F59E0B; color:white; border:none; border-radius:6px;
+              padding:10px 18px; font-size:10pt; font-weight:600; min-height:25px; }
+QPushButton:hover   { background-color:#D97706; }
+QPushButton:pressed { background-color:#B45309; }
+QPushButton[class="secondary"] { background-color:#E5E7EB; color:#374151; }
+QPushButton[class="secondary"]:hover { background-color:#D1D5DB; }
+QPushButton[class="danger"]  { background-color:#DC2626; color:white; }
+QPushButton[class="danger"]:hover  { background-color:#B91C1C; }
+QPushButton[class="success"] { background-color:#059669; color:white; }
+QPushButton[class="success"]:hover { background-color:#047857; }
+QTableWidget { background-color:#FFFFFF; alternate-background-color:#F9FAFB;
+               gridline-color:#E5E7EB; selection-background-color:#FEF3C7;
+               selection-color:#1F2937; border:1px solid #E5E7EB; border-radius:6px; }
+QTableWidget::item { padding:8px; }
+QHeaderView::section { background-color:#1F2937; color:#FFFFFF; padding:10px;
+                        border:none; font-weight:600; }
 QLineEdit, QDoubleSpinBox, QDateEdit, QComboBox, QTextEdit {
-    background-color: #FFFFFF;
-    border: 2px solid #E5E7EB;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #1F2937;
-    font-size: 10pt;
-}
-QLineEdit:hover, QDoubleSpinBox:hover, QDateEdit:hover, QComboBox:hover {
-    border: 2px solid #F59E0B;
-}
-QLineEdit:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus {
-    border: 2px solid #F59E0B;
-}
-QGroupBox {
-    background-color: #FFFFFF;
-    border: 2px solid #E5E7EB;
-    border-radius: 10px;
-    margin-top: 14px;
-    padding: 15px;
-    font-weight: 600;
-    font-size: 12pt;
-    color: #1F2937;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 15px;
-    padding: 0 8px;
-    background-color: #FFFFFF;
-}
-QProgressBar {
-    border: 2px solid #E5E7EB;
-    border-radius: 6px;
-    text-align: center;
-    background-color: #F3F4F6;
-    height: 25px;
-}
-QProgressBar::chunk {
-    background-color: #F59E0B;
-    border-radius: 4px;
-}
+    background-color:#FFFFFF; border:2px solid #E5E7EB; border-radius:6px;
+    padding:8px 12px; color:#1F2937; font-size:10pt; }
+QLineEdit:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus { border:2px solid #F59E0B; }
+QGroupBox { background-color:#FFFFFF; border:2px solid #E5E7EB; border-radius:10px;
+            margin-top:14px; padding:15px; font-weight:600; font-size:12pt; color:#1F2937; }
+QGroupBox::title { subcontrol-origin:margin; left:15px; padding:0 8px; background-color:#FFFFFF; }
+QProgressBar { border:2px solid #E5E7EB; border-radius:6px; text-align:center;
+               background-color:#F3F4F6; height:25px; }
+QProgressBar::chunk { background-color:#F59E0B; border-radius:4px; }
 """
 
+# ── Helpers de estado ──────────────────────────────────────────────────────────
+ICONOS_ESTADO = {
+    'al_dia':          '✅ Al Día',
+    'por_vencer':      '⚠️ Por Vencer (≤45d)',
+    'vencida_15':      '🟡 Vencida ≤15 días',
+    'vencida_30':      '🟠 Vencida ≤30 días',
+    'vencida_45':      '🔴 Vencida ≤45 días',
+    'vencida_mas':     '🚨 Vencida >45 días',
+    'pagada':          '💚 Pagada',
+    'sin_vencimiento': '📅 Sin Venc.',
+}
+COLOR_ESTADO = {
+    'por_vencer':   QColor("#FEF3C7"),   # amarillo claro
+    'vencida_15':   QColor("#FEF9C3"),   # amarillo suave
+    'vencida_30':   QColor("#FED7AA"),   # naranja claro
+    'vencida_45':   QColor("#FCA5A5"),   # rojo claro
+    'vencida_mas':  QColor("#F87171"),   # rojo fuerte
+    'pagada':       QColor("#D1FAE5"),   # verde claro
+}
 
+
+def _calcular_estado(fecha_vencimiento: str, saldo: float) -> str:
+    """
+    Clasifica la factura según días de retraso:
+      al_dia        → aún no vence
+      por_vencer    → vence en ≤ 45 días
+      vencida_15    → vencida entre 1 y 15 días
+      vencida_30    → vencida entre 16 y 30 días
+      vencida_45    → vencida entre 31 y 45 días
+      vencida_mas   → vencida > 45 días
+    """
+    if saldo <= 0:
+        return "pagada"
+    if not fecha_vencimiento:
+        return "sin_vencimiento"
+    try:
+        dias_hasta_venc = (
+            datetime.strptime(fecha_vencimiento, "%Y-%m-%d") - datetime.now()
+        ).days
+        if dias_hasta_venc >= 0:
+            # Aún no venció
+            return "por_vencer" if dias_hasta_venc <= 45 else "al_dia"
+        # Ya venció — dias_retraso es positivo
+        dias_retraso = -dias_hasta_venc
+        if dias_retraso <= 15:
+            return "vencida_15"
+        if dias_retraso <= 30:
+            return "vencida_30"
+        if dias_retraso <= 45:
+            return "vencida_45"
+        return "vencida_mas"
+    except Exception:
+        return "sin_vencimiento"
+
+
+# ── DeudaCard ──────────────────────────────────────────────────────────────────
 class DeudaCard(QFrame):
-    """Tarjeta de resumen de deuda"""
-    
+    """Tarjeta de resumen de deuda."""
+
+    _VALUE_CLASS = {
+        "vencida":     "deuda-value deuda-vencida",
+        "advertencia": "deuda-value deuda-por-vencer",
+    }
+
     def __init__(self, titulo, monto, moneda, tipo="normal", parent=None):
         super().__init__(parent)
-        
-        if tipo == "vencida":
-            self.setProperty("class", "deuda-card-vencida")
-        elif tipo == "advertencia":
-            self.setProperty("class", "deuda-card-advertencia")
-        else:
-            self.setProperty("class", "deuda-card")
-        
+        self.moneda = moneda
+        frame_class = (
+            "deuda-card-vencida"    if tipo == "vencida"     else
+            "deuda-card-advertencia" if tipo == "advertencia" else
+            "deuda-card"
+        )
+        self.setProperty("class", frame_class)
+
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-        
-        # Título
+
         lbl_titulo = QLabel(titulo)
         lbl_titulo.setProperty("class", "deuda-label")
         layout.addWidget(lbl_titulo)
-        
-        # Monto
+
         self.lbl_monto = QLabel(f"{moneda} {monto:,.2f}")
-        self.lbl_monto.setProperty("class", "deuda-value")
-        
-        if tipo == "vencida":
-            self.lbl_monto.setProperty("class", "deuda-value deuda-vencida")
-        elif tipo == "advertencia":
-            self.lbl_monto.setProperty("class", "deuda-value deuda-por-vencer")
-        else:
-            self.lbl_monto.setProperty("class", "deuda-value deuda-al-dia")
-        
+        self.lbl_monto.setProperty("class", self._VALUE_CLASS.get(tipo, "deuda-value deuda-al-dia"))
         layout.addWidget(self.lbl_monto)
-        
+
+        self.lbl_count = QLabel("")
+        self.lbl_count.setStyleSheet("color:#6B7280; font-size:9pt;")
+        layout.addWidget(self.lbl_count)
+
         layout.addStretch()
-    
-    def actualizar(self, monto, moneda):
-        self.lbl_monto.setText(f"{moneda} {monto:,.2f}")
+
+    def actualizar(self, monto: float, count: int = 0):
+        self.lbl_monto.setText(f"{self.moneda} {monto:,.2f}")
+        self.lbl_count.setText(f"{count} factura(s)" if count else "")
 
 
+# ── CuentasPorCobrar ───────────────────────────────────────────────────────────
 class CuentasPorCobrar(QWidget):
-    """Widget principal para gestión de cuentas por cobrar"""
-    
+    """Widget principal para gestión de cuentas por cobrar."""
+
     def __init__(self, fm: FirebaseManager, config: dict, parent=None):
         super().__init__(parent)
         self.fm = fm
         self.config = config
         self.moneda = config.get('app', {}).get('moneda', 'RD$')
-        
-        self.cuentas = []
-        self.clientes_mapa = {}
-        
+
+        self.cuentas: list[dict] = []
+        self.clientes_mapa: dict[str, str] = {}
+        self.cuentas_bancarias: dict[str, str] = {}
+
         self.setStyleSheet(CUENTAS_STYLE)
-        
         self._init_ui()
         self._cargar_clientes()
+        self._cargar_cuentas_bancarias()
         self._cargar_datos()
-    
+
+    # ── UI ─────────────────────────────────────────────────────────────────────
     def _init_ui(self):
-        """Inicializa la interfaz"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(20)
-        
-        # Header
-        header_layout = QHBoxLayout()
-        
+        layout.setContentsMargins(20, 12, 20, 12)
+        layout.setSpacing(10)
+
+        # ── Header ────────────────────────────────────────────────────────────
+        header = QHBoxLayout()
         titulo = QLabel("💳 Cuentas por Cobrar")
         titulo.setProperty("class", "title")
-        header_layout.addWidget(titulo)
-        
-        header_layout.addStretch()
-        
-        # Filtros
-        lbl_estado = QLabel("Estado:")
-        lbl_estado.setStyleSheet("font-weight: 600; color: #374151;")
-        header_layout.addWidget(lbl_estado)
-        
+        header.addWidget(titulo)
+        header.addStretch()
+
+        header.addWidget(self._lbl_filtro("Estado:"))
         self.combo_estado = QComboBox()
-        self.combo_estado.addItem("Todas", "todas")
-        self.combo_estado.addItem("Vencidas", "vencida")
-        self.combo_estado.addItem("Por Vencer (7 días)", "por_vencer")
-        self.combo_estado.addItem("Al Día", "al_dia")
-        self.combo_estado.addItem("Pagadas", "pagada")
+        for texto, data in [
+            ("Todas",                 "todas"),
+            ("Pendientes",            "pendientes"),
+            ("Al Día",                "al_dia"),
+            ("Por Vencer (≤45 días)", "por_vencer"),
+            ("Vencida ≤15 días",      "vencida_15"),
+            ("Vencida ≤30 días",      "vencida_30"),
+            ("Vencida ≤45 días",      "vencida_45"),
+            ("Vencida >45 días",      "vencida_mas"),
+            ("Todas las vencidas",    "vencidas_todas"),
+            ("Pagadas",               "pagada"),
+        ]:
+            self.combo_estado.addItem(texto, data)
         self.combo_estado.currentIndexChanged.connect(self._aplicar_filtros)
-        header_layout.addWidget(self.combo_estado)
-        
-        lbl_cliente = QLabel("Cliente:")
-        lbl_cliente.setStyleSheet("font-weight: 600; color: #374151;")
-        header_layout.addWidget(lbl_cliente)
-        
+        header.addWidget(self.combo_estado)
+
+        header.addWidget(self._lbl_filtro("Cliente:"))
         self.combo_cliente = QComboBox()
+        self.combo_cliente.setMinimumWidth(180)
         self.combo_cliente.addItem("Todos", None)
         self.combo_cliente.currentIndexChanged.connect(self._aplicar_filtros)
-        header_layout.addWidget(self.combo_cliente)
-        
+        header.addWidget(self.combo_cliente)
+
         btn_actualizar = QPushButton("🔄 Actualizar")
         btn_actualizar.clicked.connect(self._cargar_datos)
-        header_layout.addWidget(btn_actualizar)
-        
-        layout.addLayout(header_layout)
-        
-        # === RESUMEN DE DEUDAS ===
-        resumen_layout = QHBoxLayout()
-        resumen_layout.setSpacing(15)
-        
-        self.card_total = DeudaCard("💰 Total por Cobrar", 0, self.moneda)
-        resumen_layout.addWidget(self.card_total)
-        
-        self.card_vencida = DeudaCard("🚨 Deuda Vencida", 0, self.moneda, tipo="vencida")
-        resumen_layout.addWidget(self.card_vencida)
-        
-        self.card_por_vencer = DeudaCard("⚠️ Por Vencer (7 días)", 0, self.moneda, tipo="advertencia")
-        resumen_layout.addWidget(self.card_por_vencer)
-        
-        self.card_cobrado_mes = DeudaCard("✅ Cobrado Este Mes", 0, self.moneda, tipo="normal")
-        resumen_layout.addWidget(self.card_cobrado_mes)
-        
-        layout.addLayout(resumen_layout)
-        
-        # === TABLA DE CUENTAS ===
+        header.addWidget(btn_actualizar)
+        layout.addLayout(header)
+
+        # ── Barra de KPIs compacta (una sola fila, altura fija) ───────────────
+        kpi_frame = QFrame()
+        kpi_frame.setFixedHeight(72)
+        kpi_frame.setStyleSheet(
+            "QFrame { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:8px; }")
+        kpi_row = QHBoxLayout(kpi_frame)
+        kpi_row.setContentsMargins(10, 6, 10, 6)
+        kpi_row.setSpacing(0)
+
+        # Definición: (attr, label, bg, border, text_color)
+        kpi_defs = [
+            ("card_total",      "💰 Total Pendiente",  "#F9FAFB", "#E5E7EB", "#1F2937"),
+            ("card_cobrado",    "✅ Cobrado Mes",       "#F0FDF4", "#86EFAC", "#166534"),
+            ("card_por_vencer", "⚠️ Por Vencer ≤45d", "#FFFBEB", "#FCD34D", "#92400E"),
+            ("card_v15",        "🟡 Vencida ≤15d",    "#FEFCE8", "#FDE047", "#713F12"),
+            ("card_v30",        "🟠 Vencida ≤30d",    "#FFF7ED", "#FDBA74", "#9A3412"),
+            ("card_v45",        "🔴 Vencida ≤45d",    "#FEF2F2", "#FCA5A5", "#991B1B"),
+            ("card_vmas",       "🚨 Vencida >45d",    "#FFF1F2", "#FB7185", "#881337"),
+        ]
+
+        for i, (attr, label, bg, border, fg) in enumerate(kpi_defs):
+            # Separador vertical entre cards
+            if i > 0:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.Shape.VLine)
+                sep.setStyleSheet("color:#E5E7EB;")
+                kpi_row.addWidget(sep)
+
+            cell = QFrame()
+            cell.setStyleSheet(
+                f"QFrame {{ background:{bg}; border:1px solid {border};"
+                f" border-radius:6px; }}")
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(8, 4, 8, 4)
+            cell_layout.setSpacing(1)
+
+            lbl_titulo = QLabel(label)
+            lbl_titulo.setStyleSheet("font-size:8pt; color:#6B7280; font-weight:600;")
+            lbl_titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            lbl_monto = QLabel(f"{self.moneda} 0.00")
+            lbl_monto.setStyleSheet(f"font-size:11pt; font-weight:bold; color:{fg};")
+            lbl_monto.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            lbl_count = QLabel("")
+            lbl_count.setStyleSheet("font-size:7pt; color:#9CA3AF;")
+            lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            cell_layout.addWidget(lbl_titulo)
+            cell_layout.addWidget(lbl_monto)
+            cell_layout.addWidget(lbl_count)
+
+            kpi_row.addWidget(cell, stretch=1)
+
+            # Guardar referencias para actualizar después
+            setattr(self, f"_kpi_monto_{attr}", lbl_monto)
+            setattr(self, f"_kpi_count_{attr}", lbl_count)
+
+        layout.addWidget(kpi_frame)
+
+        # ── Tabla (ocupa todo el espacio restante) ────────────────────────────
         grupo_tabla = QGroupBox("📋 Detalle de Cuentas")
         layout_tabla = QVBoxLayout(grupo_tabla)
-        
-        # Botones de acción
-        botones_layout = QHBoxLayout()
-        
-        btn_registrar_pago = QPushButton("💵 Registrar Pago")
-        btn_registrar_pago.setProperty("class", "success")
-        btn_registrar_pago.clicked.connect(self._registrar_pago)
-        botones_layout.addWidget(btn_registrar_pago)
-        
-        btn_enviar_recordatorio = QPushButton("📧 Enviar Recordatorio")
-        btn_enviar_recordatorio.clicked.connect(self._enviar_recordatorio)
-        botones_layout.addWidget(btn_enviar_recordatorio)
-        
+        layout_tabla.setSpacing(6)
+
+        botones = QHBoxLayout()
+        btn_pago = QPushButton("💵 Registrar Pago")
+        btn_pago.setProperty("class", "success")
+        btn_pago.clicked.connect(self._registrar_pago)
+        botones.addWidget(btn_pago)
+
+        btn_abono = QPushButton("🏦 Registrar Abono")
+        btn_abono.clicked.connect(self._registrar_abono_cliente)
+        botones.addWidget(btn_abono)
+
+        btn_recordatorio = QPushButton("📱 WhatsApp")
+        btn_recordatorio.clicked.connect(self._enviar_recordatorio)
+        botones.addWidget(btn_recordatorio)
+
         btn_estado_cuenta = QPushButton("📄 Estado de Cuenta")
         btn_estado_cuenta.setProperty("class", "secondary")
         btn_estado_cuenta.clicked.connect(self._generar_estado_cuenta)
-        botones_layout.addWidget(btn_estado_cuenta)
-        
-        btn_exportar = QPushButton("📊 Exportar Excel")
+        botones.addWidget(btn_estado_cuenta)
+
+        btn_exportar = QPushButton("📊 Excel")
         btn_exportar.setProperty("class", "secondary")
         btn_exportar.clicked.connect(self._exportar_excel)
-        botones_layout.addWidget(btn_exportar)
-        
-        botones_layout.addStretch()
-        layout_tabla.addLayout(botones_layout)
-        
-        # Tabla
+        botones.addWidget(btn_exportar)
+
+        botones.addStretch()
+        self.lbl_conteo = QLabel("0 registros")
+        self.lbl_conteo.setStyleSheet("color:#6B7280; font-size:9pt;")
+        botones.addWidget(self.lbl_conteo)
+        layout_tabla.addLayout(botones)
+
         self.tabla = QTableWidget()
         self.tabla.setColumnCount(9)
         self.tabla.setHorizontalHeaderLabels([
-            "ID", "Cliente", "Factura", "Fecha Emisión", "Fecha Vencimiento",
-            "Monto Total", "Pagado", "Saldo", "Estado"
+            "ID", "Cliente", "Factura/Conduce", "Fecha Emisión",
+            "Vencimiento", "Monto Total", "Pagado", "Saldo", "Estado",
         ])
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tabla.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tabla.setAlternatingRowColors(True)
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.tabla.itemDoubleClicked.connect(self._ver_detalle)
         layout_tabla.addWidget(self.tabla)
-        
-        layout.addWidget(grupo_tabla)
-        
-        # === PANEL DE MÉTRICAS ===
-        metricas_group = QGroupBox("📊 Métricas de Cobranza")
-        metricas_layout = QVBoxLayout(metricas_group)
-        
-        # Tasa de recuperación
-        tasa_layout = QHBoxLayout()
-        lbl_tasa = QLabel("Tasa de Recuperación (Este Mes):")
-        lbl_tasa.setStyleSheet("font-weight: 600; color: #374151;")
-        tasa_layout.addWidget(lbl_tasa)
-        
-        self.progress_tasa = QProgressBar()
-        self.progress_tasa.setRange(0, 100)
-        self.progress_tasa.setValue(0)
-        self.progress_tasa.setFormat("%p%")
-        tasa_layout.addWidget(self.progress_tasa)
-        
-        self.lbl_tasa_detalle = QLabel("0 / 0")
-        self.lbl_tasa_detalle.setStyleSheet("color: #6B7280;")
-        tasa_layout.addWidget(self.lbl_tasa_detalle)
-        
-        metricas_layout.addLayout(tasa_layout)
-        
-        # Edad promedio de deuda
-        edad_layout = QHBoxLayout()
-        lbl_edad = QLabel("Edad Promedio de Deuda:")
-        lbl_edad.setStyleSheet("font-weight: 600; color: #374151;")
-        edad_layout.addWidget(lbl_edad)
-        
-        self.lbl_edad_promedio = QLabel("0 días")
-        self.lbl_edad_promedio.setStyleSheet("font-size: 12pt; font-weight: bold; color: #F59E0B;")
-        edad_layout.addWidget(self.lbl_edad_promedio)
-        edad_layout.addStretch()
-        
-        metricas_layout.addLayout(edad_layout)
-        
-        layout.addWidget(metricas_group)
-    
+
+        # ── Barra de totales del filtro actual ────────────────────────────────
+        totales_frame = QFrame()
+        totales_frame.setFixedHeight(36)
+        totales_frame.setStyleSheet(
+            "QFrame { background:#1F2937; border-radius:6px; }"
+            "QLabel  { color:#F9FAFB; font-size:9pt; font-weight:600; }"
+        )
+        totales_row = QHBoxLayout(totales_frame)
+        totales_row.setContentsMargins(14, 0, 14, 0)
+        totales_row.setSpacing(30)
+
+        def _stat(icono, texto_attr):
+            lbl = QLabel(f"{icono}  —")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+            totales_row.addWidget(lbl)
+            setattr(self, texto_attr, lbl)
+
+        _stat("📄 Facturas:",        "_tot_facturas")
+        _stat("✅ Pagado:",          "_tot_pagado")
+        _stat("💳 Adeudado:",        "_tot_adeudado")
+        _stat("📅 Deuda más antigua:","_tot_antigua")
+        totales_row.addStretch()
+
+        layout_tabla.addWidget(totales_frame)
+
+        # stretch=1 hace que la tabla tome todo el espacio vertical disponible
+        layout.addWidget(grupo_tabla, stretch=1)
+
+    @staticmethod
+    def _lbl_filtro(texto: str) -> QLabel:
+        lbl = QLabel(texto)
+        lbl.setStyleSheet("font-weight:600; color:#374151;")
+        return lbl
+
+    # ── Carga de datos ─────────────────────────────────────────────────────────
     def _cargar_clientes(self):
-        """Carga la lista de clientes"""
         try:
-            clientes = self.fm.obtener_entidades(tipo="Cliente", activo=True)
+            clientes = self.fm.obtener_entidades(tipo="Cliente", activo=True) or []
             self.clientes_mapa = {str(c['id']): c['nombre'] for c in clientes}
-            
+            self.combo_cliente.blockSignals(True)
             self.combo_cliente.clear()
             self.combo_cliente.addItem("Todos", None)
-            
             for cid, nombre in sorted(self.clientes_mapa.items(), key=lambda x: x[1]):
                 self.combo_cliente.addItem(nombre, cid)
-                
+            self.combo_cliente.blockSignals(False)
         except Exception as e:
             logger.error(f"Error cargando clientes: {e}", exc_info=True)
-    
-    def _cargar_datos(self):
-        """Carga las cuentas por cobrar desde Firebase"""
+
+    def _cargar_cuentas_bancarias(self):
         try:
-            # Obtener todos los alquileres con saldo pendiente
-            alquileres = self.fm.obtener_alquileres({})
-            
+            mapa = self.fm.obtener_mapa_global("cuentas") or {}
+            self.cuentas_bancarias = {str(k): v for k, v in mapa.items()}
+        except Exception as e:
+            logger.error(f"Error cargando cuentas bancarias: {e}", exc_info=True)
+
+    def _cargar_datos(self):
+        """
+        Carga todos los alquileres y calcula monto_pagado sumando la
+        subcolección alquileres/{id}/pagos de cada uno.
+        """
+        try:
+            alquileres = self.fm.obtener_alquileres({}) or []
+
+            if not alquileres:
+                self.cuentas = []
+                self._aplicar_filtros()
+                return
+
+            # Traer pagos de todos los alquileres en batch
+            ids = [str(a.get('id', '')) for a in alquileres if a.get('id')]
+            pagos_mapa = self.fm.obtener_pagos_por_alquileres(ids)  # {alq_id: total_pagado}
+
+            # También traer abonos del mes actual para la métrica "Cobrado Este Mes"
+            inicio_mes = datetime.now().replace(day=1).strftime("%Y-%m-%d")
+            fin_mes    = datetime.now().strftime("%Y-%m-%d")
+            try:
+                abonos_mes = self.fm.obtener_abonos(
+                    fecha_inicio=inicio_mes,
+                    fecha_fin=fin_mes,
+                ) or []
+            except Exception:
+                abonos_mes = []
+            self._cobrado_mes = sum(float(a.get('monto', 0)) for a in abonos_mes)
+
             self.cuentas = []
-            
             for alquiler in alquileres:
-                monto_total = float(alquiler.get('monto_total', 0))
-                monto_pagado = float(alquiler.get('monto_pagado', 0))
-                saldo = monto_total - monto_pagado
-                
-                # Solo incluir si hay saldo pendiente o fue pagado recientemente
-                if saldo > 0 or (saldo == 0 and alquiler.get('fecha_ultimo_pago')):
-                    fecha_vencimiento = alquiler.get('fecha_vencimiento_pago', alquiler.get('fecha_fin'))
-                    
-                    # Calcular estado
-                    estado = self._calcular_estado(fecha_vencimiento, saldo)
-                    
-                    cuenta = {
-                        'id': alquiler.get('id'),
-                        'cliente_id': str(alquiler.get('cliente_id', '')),
-                        'factura': alquiler.get('numero_factura', f"ALQ-{alquiler.get('id')}"),
-                        'fecha_emision': alquiler.get('fecha_inicio', ''),
-                        'fecha_vencimiento': fecha_vencimiento,
-                        'monto_total': monto_total,
-                        'monto_pagado': monto_pagado,
-                        'saldo': saldo,
-                        'estado': estado,
-                        'alquiler': alquiler
-                    }
-                    
-                    self.cuentas.append(cuenta)
-            
+                alq_id      = str(alquiler.get('id', ''))
+                monto_total = float(alquiler.get('monto', 0) or 0)
+
+                if monto_total <= 0:
+                    continue
+
+                monto_pagado = float(pagos_mapa.get(alq_id, 0.0))
+                saldo        = max(0.0, monto_total - monto_pagado)
+
+                fecha_venc = (
+                    alquiler.get('fecha_vencimiento_pago') or
+                    alquiler.get('fecha_fin') or ''
+                )
+                estado = _calcular_estado(fecha_venc, saldo)
+
+                # Identificador visible de la factura
+                factura = (
+                    alquiler.get('numero_factura') or
+                    alquiler.get('conduce') or
+                    alquiler.get('descripcion') or
+                    f"ALQ-{alq_id[:8]}"
+                )
+
+                self.cuentas.append({
+                    'id':               alq_id,
+                    'cliente_id':       str(alquiler.get('cliente_id', '')),
+                    'factura':          factura,
+                    'fecha_emision':    alquiler.get('fecha') or alquiler.get('fecha_inicio', ''),
+                    'fecha_vencimiento':fecha_venc,
+                    'monto_total':      monto_total,
+                    'monto_pagado':     monto_pagado,
+                    'saldo':            saldo,
+                    'estado':           estado,
+                    'alquiler':         alquiler,
+                })
+
             self._aplicar_filtros()
-            
+
         except Exception as e:
             logger.error(f"Error cargando cuentas por cobrar: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Error al cargar datos:\n{e}")
-    
-    def _calcular_estado(self, fecha_vencimiento, saldo):
-        """Calcula el estado de la cuenta"""
-        if saldo == 0:
-            return "pagada"
-        
-        if not fecha_vencimiento:
-            return "sin_vencimiento"
-        
-        try:
-            fecha_venc = datetime.strptime(fecha_vencimiento, "%Y-%m-%d")
-            hoy = datetime.now()
-            dias_diferencia = (fecha_venc - hoy).days
-            
-            if dias_diferencia < 0:
-                return "vencida"
-            elif dias_diferencia <= 7:
-                return "por_vencer"
-            else:
-                return "al_dia"
-        except:
-            return "sin_vencimiento"
-    
+
+    # ── Filtros y vista ────────────────────────────────────────────────────────
+    # Estados que se consideran "vencidos" para agrupar
+    _VENCIDOS = {'vencida_15', 'vencida_30', 'vencida_45', 'vencida_mas'}
+
     def _aplicar_filtros(self):
-        """Aplica filtros y actualiza la vista"""
         try:
             estado_filtro = self.combo_estado.currentData()
-            cliente_id = self.combo_cliente.currentData()
-            
-            # Filtrar cuentas
-            cuentas_filtradas = self.cuentas
-            
-            if estado_filtro != "todas":
-                cuentas_filtradas = [c for c in cuentas_filtradas if c['estado'] == estado_filtro]
-            
+            cliente_id    = self.combo_cliente.currentData()
+
+            filtradas = self.cuentas
+
+            if estado_filtro == "pendientes":
+                filtradas = [c for c in filtradas if c['estado'] != 'pagada']
+            elif estado_filtro == "vencidas_todas":
+                filtradas = [c for c in filtradas if c['estado'] in self._VENCIDOS]
+            elif estado_filtro != "todas":
+                filtradas = [c for c in filtradas if c['estado'] == estado_filtro]
+
             if cliente_id:
-                cuentas_filtradas = [c for c in cuentas_filtradas if c['cliente_id'] == cliente_id]
-            
-            # Actualizar resumen
+                filtradas = [c for c in filtradas if c['cliente_id'] == cliente_id]
+
             self._actualizar_resumen()
-            
-            # Actualizar tabla
-            self._actualizar_tabla(cuentas_filtradas)
-            
-            # Actualizar métricas
-            self._actualizar_metricas()
-            
+            self._actualizar_tabla(filtradas)
+
         except Exception as e:
             logger.error(f"Error aplicando filtros: {e}", exc_info=True)
-    
+
+    def _kpi_set(self, attr: str, monto: float, count: int = 0):
+        """Actualiza los labels del KPI compacto."""
+        lbl_m = getattr(self, f"_kpi_monto_{attr}", None)
+        lbl_c = getattr(self, f"_kpi_count_{attr}", None)
+        if lbl_m:
+            lbl_m.setText(f"{self.moneda} {monto:,.2f}")
+        if lbl_c:
+            lbl_c.setText(f"{count} factura(s)" if count else "")
+
     def _actualizar_resumen(self):
-        """Actualiza las tarjetas de resumen"""
-        total_por_cobrar = sum(c['saldo'] for c in self.cuentas if c['estado'] != 'pagada')
-        deuda_vencida = sum(c['saldo'] for c in self.cuentas if c['estado'] == 'vencida')
-        por_vencer = sum(c['saldo'] for c in self.cuentas if c['estado'] == 'por_vencer')
-        
-        # Cobrado este mes
-        hoy = datetime.now()
-        inicio_mes = hoy.replace(day=1).strftime("%Y-%m-%d")
-        
-        cobrado_mes = 0
-        for cuenta in self.cuentas:
-            if cuenta['estado'] == 'pagada':
-                fecha_pago = cuenta['alquiler'].get('fecha_ultimo_pago', '')
-                if fecha_pago >= inicio_mes:
-                    cobrado_mes += cuenta['monto_total']
-        
-        self.card_total.actualizar(total_por_cobrar, self.moneda)
-        self.card_vencida.actualizar(deuda_vencida, self.moneda)
-        self.card_por_vencer.actualizar(por_vencer, self.moneda)
-        self.card_cobrado_mes.actualizar(cobrado_mes, self.moneda)
-    
-    def _actualizar_tabla(self, cuentas):
-        """Actualiza la tabla de cuentas"""
+        pendientes = [c for c in self.cuentas if c['estado'] != 'pagada']
+        por_vencer = [c for c in self.cuentas if c['estado'] == 'por_vencer']
+        v15  = [c for c in self.cuentas if c['estado'] == 'vencida_15']
+        v30  = [c for c in self.cuentas if c['estado'] == 'vencida_30']
+        v45  = [c for c in self.cuentas if c['estado'] == 'vencida_45']
+        vmas = [c for c in self.cuentas if c['estado'] == 'vencida_mas']
+
+        self._kpi_set("card_total",      sum(c['saldo'] for c in pendientes), len(pendientes))
+        self._kpi_set("card_cobrado",    getattr(self, '_cobrado_mes', 0.0))
+        self._kpi_set("card_por_vencer", sum(c['saldo'] for c in por_vencer), len(por_vencer))
+        self._kpi_set("card_v15",        sum(c['saldo'] for c in v15),  len(v15))
+        self._kpi_set("card_v30",        sum(c['saldo'] for c in v30),  len(v30))
+        self._kpi_set("card_v45",        sum(c['saldo'] for c in v45),  len(v45))
+        self._kpi_set("card_vmas",       sum(c['saldo'] for c in vmas), len(vmas))
+
+    def _actualizar_tabla(self, cuentas: list[dict]):
         self.tabla.setRowCount(0)
-        
-        for cuenta in sorted(cuentas, key=lambda x: (x['estado'] == 'vencida', x['fecha_vencimiento']), reverse=True):
+
+        # Orden: más vencidas primero, luego por fecha de vencimiento
+        orden = {
+            'vencida_mas': 0, 'vencida_45': 1, 'vencida_30': 2, 'vencida_15': 3,
+            'por_vencer': 4, 'sin_vencimiento': 5, 'al_dia': 6, 'pagada': 7,
+        }
+        cuentas_ord = sorted(
+            cuentas,
+            key=lambda c: (orden.get(c['estado'], 8), c['fecha_vencimiento'] or '9999'),
+        )
+
+        for cuenta in cuentas_ord:
             row = self.tabla.rowCount()
             self.tabla.insertRow(row)
-            
-            cliente_nombre = self.clientes_mapa.get(cuenta['cliente_id'], f"ID: {cuenta['cliente_id']}")
-            
-            # Iconos de estado
-            iconos_estado = {
-                'vencida': '🚨 Vencida',
-                'por_vencer': '⚠️ Por Vencer',
-                'al_dia': '✅ Al Día',
-                'pagada': '💚 Pagada',
-                'sin_vencimiento': '📅 Sin Venc.'
-            }
-            
-            estado_texto = iconos_estado.get(cuenta['estado'], cuenta['estado'])
-            
-            # Colorear filas según estado
-            color_fondo = None
-            if cuenta['estado'] == 'vencida':
-                color_fondo = QColor("#FEE2E2")  # Rojo claro
-            elif cuenta['estado'] == 'por_vencer':
-                color_fondo = QColor("#FEF3C7")  # Amarillo claro
-            elif cuenta['estado'] == 'pagada':
-                color_fondo = QColor("#D1FAE5")  # Verde claro
-            
+
+            cliente_nombre = self.clientes_mapa.get(cuenta['cliente_id'],
+                                                    f"ID: {cuenta['cliente_id']}")
+            estado_texto   = ICONOS_ESTADO.get(cuenta['estado'], cuenta['estado'])
+            color_fondo    = COLOR_ESTADO.get(cuenta['estado'])
+
             items = [
-                QTableWidgetItem(str(cuenta['id'])),
+                QTableWidgetItem(str(cuenta['id'])[:12]),
                 QTableWidgetItem(cliente_nombre),
                 QTableWidgetItem(cuenta['factura']),
                 QTableWidgetItem(cuenta['fecha_emision']),
-                QTableWidgetItem(cuenta['fecha_vencimiento'] or '-'),
+                QTableWidgetItem(cuenta['fecha_vencimiento'] or '—'),
                 QTableWidgetItem(f"{self.moneda} {cuenta['monto_total']:,.2f}"),
                 QTableWidgetItem(f"{self.moneda} {cuenta['monto_pagado']:,.2f}"),
                 QTableWidgetItem(f"{self.moneda} {cuenta['saldo']:,.2f}"),
-                QTableWidgetItem(estado_texto)
+                QTableWidgetItem(estado_texto),
             ]
-            
+
             for col, item in enumerate(items):
                 if color_fondo:
                     item.setBackground(QBrush(color_fondo))
-                
-                if col in [5, 6, 7]:  # Montos
+                if col in (5, 6, 7):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                elif col in [0, 3, 4, 8]:  # ID, fechas, estado
+                elif col in (0, 3, 4, 8):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                
                 self.tabla.setItem(row, col, item)
-    
-    def _actualizar_metricas(self):
-        """Actualiza las métricas de cobranza"""
-        try:
-            # Tasa de recuperación del mes
-            hoy = datetime.now()
-            inicio_mes = hoy.replace(day=1).strftime("%Y-%m-%d")
-            
-            cuentas_mes = [c for c in self.cuentas if c['fecha_emision'] >= inicio_mes]
-            
-            if cuentas_mes:
-                total_emitido = sum(c['monto_total'] for c in cuentas_mes)
-                total_cobrado = sum(c['monto_pagado'] for c in cuentas_mes)
-                
-                tasa = (total_cobrado / total_emitido * 100) if total_emitido > 0 else 0
-                
-                self.progress_tasa.setValue(int(tasa))
-                self.lbl_tasa_detalle.setText(f"{self.moneda} {total_cobrado:,.0f} / {self.moneda} {total_emitido:,.0f}")
-            else:
-                self.progress_tasa.setValue(0)
-                self.lbl_tasa_detalle.setText("0 / 0")
-            
-            # Edad promedio de deuda
-            cuentas_pendientes = [c for c in self.cuentas if c['saldo'] > 0 and c['fecha_vencimiento']]
-            
-            if cuentas_pendientes:
-                edades = []
-                for cuenta in cuentas_pendientes:
-                    try:
-                        fecha_venc = datetime.strptime(cuenta['fecha_vencimiento'], "%Y-%m-%d")
-                        edad = (datetime.now() - fecha_venc).days
-                        if edad > 0:  # Solo deudas vencidas
-                            edades.append(edad)
-                    except:
-                        continue
-                
-                if edades:
-                    edad_promedio = sum(edades) / len(edades)
-                    self.lbl_edad_promedio.setText(f"{edad_promedio:.0f} días")
-                else:
-                    self.lbl_edad_promedio.setText("0 días")
-            else:
-                self.lbl_edad_promedio.setText("0 días")
-            
-        except Exception as e:
-            logger.error(f"Error actualizando métricas: {e}", exc_info=True)
-    
-    def _registrar_pago(self):
-        """Registra un pago para la cuenta seleccionada"""
-        current_row = self.tabla.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "Sin Selección", "Debe seleccionar una cuenta.")
-            return
-        
-        cuenta_id = self.tabla.item(current_row, 0).text()
-        cuenta = next((c for c in self.cuentas if str(c['id']) == cuenta_id), None)
-        
-        if not cuenta:
-            QMessageBox.warning(self, "Error", "No se encontró la cuenta.")
-            return
-        
-        if cuenta['saldo'] <= 0:
-            QMessageBox.information(self, "Cuenta Pagada", "Esta cuenta ya está completamente pagada.")
-            return
-        
-        dialog = DialogoRegistrarPago(cuenta, self.clientes_mapa, self.moneda, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Actualizar el alquiler con el pago
-            monto_pago = dialog.get_monto_pago()
-            
+
+        n = len(cuentas_ord)
+        self.lbl_conteo.setText(f"{n} registro(s)")
+
+        # ── Totales del filtro ─────────────────────────────────────────────────
+        total_pagado  = sum(c['monto_pagado'] for c in cuentas_ord)
+        total_adeudado= sum(c['saldo']        for c in cuentas_ord)
+        pagadas_count = sum(1 for c in cuentas_ord if c['estado'] == 'pagada')
+
+        # Deuda más antigua: la fecha de vencimiento más antigua entre las vencidas
+        fechas_venc = [
+            c['fecha_vencimiento'] for c in cuentas_ord
+            if c['estado'] in self._VENCIDOS and c['fecha_vencimiento']
+        ]
+        if fechas_venc:
+            fecha_antigua = min(fechas_venc)
             try:
-                nuevo_monto_pagado = cuenta['monto_pagado'] + monto_pago
-                
-                datos_actualizacion = {
-                    'monto_pagado': nuevo_monto_pagado,
-                    'fecha_ultimo_pago': datetime.now().strftime("%Y-%m-%d")
-                }
-                
-                if nuevo_monto_pagado >= cuenta['monto_total']:
-                    datos_actualizacion['estado'] = 'pagado'
-                
-                if self.fm.editar_alquiler(cuenta['id'], datos_actualizacion):
-                    QMessageBox.information(self, "Éxito", f"Pago de {self.moneda} {monto_pago:,.2f} registrado correctamente.")
-                    self._cargar_datos()
-                else:
-                    QMessageBox.critical(self, "Error", "No se pudo registrar el pago.")
-            
-            except Exception as e:
-                logger.error(f"Error registrando pago: {e}", exc_info=True)
-                QMessageBox.critical(self, "Error", f"Error al registrar pago:\n{e}")
-    
-    def _enviar_recordatorio(self):
-        """Envía recordatorio de pago al cliente"""
-        current_row = self.tabla.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "Sin Selección", "Debe seleccionar una cuenta.")
-            return
-        
-        cuenta_id = self.tabla.item(current_row, 0).text()
-        cuenta = next((c for c in self.cuentas if str(c['id']) == cuenta_id), None)
-        
+                dias_atraso = (datetime.now() - datetime.strptime(fecha_antigua, "%Y-%m-%d")).days
+                antigua_txt = f"{fecha_antigua}  ({dias_atraso}d atrás)"
+            except Exception:
+                antigua_txt = fecha_antigua
+        else:
+            antigua_txt = "—"
+
+        self._tot_facturas.setText(
+            f"📄 Facturas:  {n} total · {pagadas_count} pagadas · {n - pagadas_count} pendientes")
+        self._tot_pagado.setText(
+            f"✅ Pagado:  {self.moneda} {total_pagado:,.2f}")
+        self._tot_adeudado.setText(
+            f"💳 Adeudado:  {self.moneda} {total_adeudado:,.2f}")
+        self._tot_antigua.setText(
+            f"📅 Deuda más antigua:  {antigua_txt}")
+
+    # ── Acciones ───────────────────────────────────────────────────────────────
+    def _get_cuenta_seleccionada(self) -> dict | None:
+        """Devuelve el dict de cuenta de la fila seleccionada o None."""
+        row = self.tabla.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "Sin Selección", "Seleccione una cuenta primero.")
+            return None
+        alq_id = self.tabla.item(row, 0).text()
+        # Buscar por prefijo (ID puede estar truncado en la tabla)
+        cuenta = next(
+            (c for c in self.cuentas if str(c['id']).startswith(alq_id)),
+            None,
+        )
+        if not cuenta:
+            QMessageBox.warning(self, "Error", "No se encontró la cuenta seleccionada.")
+        return cuenta
+
+    def _registrar_pago(self):
+        """Registra un pago directo a una factura específica (subcolección pagos)."""
+        cuenta = self._get_cuenta_seleccionada()
         if not cuenta:
             return
-        
+
+        if cuenta['saldo'] <= 0:
+            QMessageBox.information(self, "Cuenta Pagada",
+                                    "Esta factura ya está completamente pagada.")
+            return
+
+        dlg = DialogoRegistrarPago(
+            cuenta, self.clientes_mapa, self.cuentas_bancarias, self.moneda, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        monto    = dlg.get_monto()
+        fecha    = dlg.get_fecha()
+        cuenta_b = dlg.get_cuenta_id()
+        comment  = dlg.get_comentario()
+
+        try:
+            pago_data = {
+                "fecha":      fecha,
+                "monto":      monto,
+                "cliente_id": cuenta['cliente_id'],
+                "comentario": comment,
+            }
+            if cuenta_b:
+                pago_data["cuenta_id"] = cuenta_b
+
+            pago_id = str(uuid.uuid4())
+            (self.fm.db
+             .collection("alquileres")
+             .document(cuenta['id'])
+             .collection("pagos")
+             .document(pago_id)
+             .set(pago_data))
+
+            # Recalcular flag pagado
+            self.fm._recalcular_estado_pago_alquiler(cuenta['id'])
+
+            QMessageBox.information(
+                self, "Pago Registrado",
+                f"Pago de {self.moneda} {monto:,.2f} registrado correctamente.")
+            self._cargar_datos()
+
+        except Exception as e:
+            logger.error(f"Error registrando pago: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"No se pudo registrar el pago:\n{e}")
+
+    def _registrar_abono_cliente(self):
+        """Abre la ventana de abonos para el cliente de la fila seleccionada."""
+        cuenta = self._get_cuenta_seleccionada()
+        if not cuenta:
+            return
+        from dialogos.ventana_gestion_abono import VentanaGestionAbonos
+        dlg = VentanaGestionAbonos(
+            self.fm, self.moneda, self.clientes_mapa, parent=self)
+        dlg.exec()
+        self._cargar_datos()
+
+    def _enviar_recordatorio(self):
+        """Prepara mensaje de WhatsApp para el cliente seleccionado."""
+        cuenta = self._get_cuenta_seleccionada()
+        if not cuenta:
+            return
+        if cuenta['saldo'] <= 0:
+            QMessageBox.information(self, "Sin Saldo", "Esta factura no tiene saldo pendiente.")
+            return
+
         cliente_nombre = self.clientes_mapa.get(cuenta['cliente_id'], 'Cliente')
-        
-        # Aquí se integrará con WhatsApp (siguiente módulo)
         mensaje = (
             f"Estimado/a {cliente_nombre},\n\n"
             f"Le recordamos que tiene un saldo pendiente:\n\n"
             f"Factura: {cuenta['factura']}\n"
-            f"Monto: {self.moneda} {cuenta['saldo']:,.2f}\n"
-            f"Vencimiento: {cuenta['fecha_vencimiento']}\n\n"
-            f"Por favor, regularice su pago a la brevedad posible.\n\n"
-            f"Saludos cordiales."
+            f"Monto pendiente: {self.moneda} {cuenta['saldo']:,.2f}\n"
         )
-        
-        dialog = DialogoRecordatorio(cliente_nombre, mensaje, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            QMessageBox.information(
-                self,
-                "Recordatorio",
-                f"Recordatorio preparado para {cliente_nombre}.\n\n"
-                f"Integración con WhatsApp próximamente."
-            )
-    
+        if cuenta['fecha_vencimiento']:
+            mensaje += f"Fecha de vencimiento: {cuenta['fecha_vencimiento']}\n"
+        mensaje += "\nPor favor, regularice su pago a la brevedad.\n\nGracias."
+
+        dlg = DialogoRecordatorio(cliente_nombre, mensaje, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # Intentar abrir WhatsApp si está integrado
+            try:
+                from whatsapp_integration import WhatsAppIntegration
+                wa = WhatsAppIntegration(self.config)
+                # Buscar teléfono del cliente
+                cliente_data = next(
+                    (c for c in (self.fm.obtener_entidades(tipo="Cliente") or [])
+                     if str(c.get('id', '')) == cuenta['cliente_id']),
+                    None,
+                )
+                telefono = (cliente_data or {}).get('telefono', '')
+                if telefono:
+                    wa.enviar_mensaje(telefono, dlg.get_mensaje())
+                    QMessageBox.information(self, "Enviado", "Recordatorio enviado por WhatsApp.")
+                else:
+                    QMessageBox.information(
+                        self, "Sin Teléfono",
+                        "El cliente no tiene teléfono registrado.\n"
+                        "El mensaje fue preparado pero no enviado.")
+            except Exception as e:
+                logger.warning(f"WhatsApp no disponible: {e}")
+                QMessageBox.information(
+                    self, "Recordatorio Listo",
+                    "Mensaje preparado.\nIntegración con WhatsApp no disponible.")
+
     def _ver_detalle(self):
-        """Muestra detalle de la cuenta seleccionada"""
-        current_row = self.tabla.currentRow()
-        if current_row < 0:
-            return
-        
-        cuenta_id = self.tabla.item(current_row, 0).text()
-        cuenta = next((c for c in self.cuentas if str(c['id']) == cuenta_id), None)
-        
+        cuenta = self._get_cuenta_seleccionada()
         if not cuenta:
             return
-        
-        cliente_nombre = self.clientes_mapa.get(cuenta['cliente_id'], 'Cliente Desconocido')
-        
-        detalle = f"""
-<h2>Detalle de Cuenta</h2>
-<hr>
+        cliente_nombre = self.clientes_mapa.get(cuenta['cliente_id'], 'Desconocido')
+        alq = cuenta['alquiler']
+        modalidad = alq.get('modalidad_facturacion', '—')
+
+        detalle_modal = f"""
+<h2>Detalle de Factura</h2><hr>
 <p><b>Cliente:</b> {cliente_nombre}</p>
-<p><b>Factura:</b> {cuenta['factura']}</p>
+<p><b>Factura/Conduce:</b> {cuenta['factura']}</p>
 <p><b>Fecha Emisión:</b> {cuenta['fecha_emision']}</p>
-<p><b>Fecha Vencimiento:</b> {cuenta['fecha_vencimiento'] or 'Sin vencimiento'}</p>
+<p><b>Vencimiento:</b> {cuenta['fecha_vencimiento'] or 'Sin vencimiento'}</p>
+<p><b>Modalidad:</b> {modalidad}</p>
 <hr>
 <p><b>Monto Total:</b> {self.moneda} {cuenta['monto_total']:,.2f}</p>
 <p><b>Monto Pagado:</b> {self.moneda} {cuenta['monto_pagado']:,.2f}</p>
-<p><b>Saldo Pendiente:</b> <span style="color: #DC2626; font-size: 14pt;"><b>{self.moneda} {cuenta['saldo']:,.2f}</b></span></p>
+<p><b>Saldo Pendiente:</b>
+   <span style="color:#DC2626; font-size:14pt;">
+   <b>{self.moneda} {cuenta['saldo']:,.2f}</b></span></p>
 <hr>
-<p><b>Estado:</b> {cuenta['estado'].upper()}</p>
-        """
-        
+<p><b>Estado:</b> {ICONOS_ESTADO.get(cuenta['estado'], cuenta['estado'])}</p>
+"""
         msg = QMessageBox(self)
-        msg.setWindowTitle("Detalle de Cuenta")
+        msg.setWindowTitle("Detalle de Factura")
         msg.setTextFormat(Qt.TextFormat.RichText)
-        msg.setText(detalle)
+        msg.setText(detalle_modal)
         msg.setIcon(QMessageBox.Icon.Information)
         msg.exec()
-    
+
     def _generar_estado_cuenta(self):
-        """Genera estado de cuenta en PDF"""
-        current_row = self.tabla.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "Sin Selección", "Debe seleccionar una cuenta.")
-            return
-        
-        QMessageBox.information(
-            self,
-            "Generar Estado de Cuenta",
-            "Funcionalidad de generación de PDF próximamente.\n\n"
-            "Se integrará con el sistema de reportes existente."
-        )
-    
+        """Abre el diálogo de Estado de Cuenta. Pre-selecciona el cliente si hay fila seleccionada."""
+        # Intentar obtener cliente de la fila seleccionada (opcional)
+        cliente_id = None
+        row = self.tabla.currentRow()
+        if row >= 0:
+            alq_id = self.tabla.item(row, 0).text()
+            cuenta = next(
+                (c for c in self.cuentas if str(c['id']).startswith(alq_id)),
+                None,
+            )
+            if cuenta:
+                cliente_id = cuenta.get('cliente_id')
+
+        try:
+            from dialogos.estado_cuenta_dialog import EstadoCuentaDialog
+            moneda = self.config.get('app', {}).get('moneda', 'RD$')
+            dlg = EstadoCuentaDialog(
+                self.fm,
+                parent=self,
+                currency_symbol=moneda,
+                cliente_id=cliente_id,
+            )
+            dlg.exec()
+        except Exception as e:
+            logger.error(f"Estado de cuenta: {e}", exc_info=True)
+            QMessageBox.information(
+                self, "Estado de Cuenta",
+                "No se pudo abrir el estado de cuenta.\n"
+                f"Detalle: {e}")
+
     def _exportar_excel(self):
-        """Exporta las cuentas a Excel"""
+        """Exporta las cuentas visibles a Excel."""
         try:
             from openpyxl import Workbook
             from openpyxl.styles import Font, Alignment, PatternFill
-            
+            from PyQt6.QtWidgets import QFileDialog
+
             archivo, _ = QFileDialog.getSaveFileName(
-                self,
-                "Guardar Reporte",
+                self, "Guardar Reporte",
                 f"CuentasPorCobrar_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                "Excel (*.xlsx)"
-            )
-            
+                "Excel (*.xlsx)")
             if not archivo:
                 return
-            
+
             wb = Workbook()
             ws = wb.active
             ws.title = "Cuentas por Cobrar"
-            
-            # Encabezados
-            headers = ["Cliente", "Factura", "Fecha Emisión", "Fecha Vencimiento", 
-                      "Monto Total", "Pagado", "Saldo", "Estado"]
-            
-            for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col, value=header)
+
+            headers = ["Cliente", "Factura/Conduce", "Fecha Emisión",
+                       "Vencimiento", "Monto Total", "Pagado", "Saldo", "Estado"]
+            for col, h in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=h)
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill(start_color="1F2937", end_color="1F2937", fill_type="solid")
                 cell.alignment = Alignment(horizontal="center")
-            
-            # Datos
-            for row, cuenta in enumerate(self.cuentas, 2):
-                cliente_nombre = self.clientes_mapa.get(cuenta['cliente_id'], 'Desconocido')
-                
-                ws.cell(row=row, column=1, value=cliente_nombre)
-                ws.cell(row=row, column=2, value=cuenta['factura'])
-                ws.cell(row=row, column=3, value=cuenta['fecha_emision'])
-                ws.cell(row=row, column=4, value=cuenta['fecha_vencimiento'] or '-')
-                ws.cell(row=row, column=5, value=cuenta['monto_total'])
-                ws.cell(row=row, column=6, value=cuenta['monto_pagado'])
-                ws.cell(row=row, column=7, value=cuenta['saldo'])
-                ws.cell(row=row, column=8, value=cuenta['estado'])
-            
+
+            for row, c in enumerate(self.cuentas, 2):
+                ws.cell(row=row, column=1, value=self.clientes_mapa.get(c['cliente_id'], c['cliente_id']))
+                ws.cell(row=row, column=2, value=c['factura'])
+                ws.cell(row=row, column=3, value=c['fecha_emision'])
+                ws.cell(row=row, column=4, value=c['fecha_vencimiento'] or '')
+                ws.cell(row=row, column=5, value=c['monto_total'])
+                ws.cell(row=row, column=6, value=c['monto_pagado'])
+                ws.cell(row=row, column=7, value=c['saldo'])
+                ws.cell(row=row, column=8, value=c['estado'])
+
             wb.save(archivo)
-            
-            QMessageBox.information(self, "Éxito", f"Reporte exportado:\n{archivo}")
-            
+            QMessageBox.information(self, "Exportado", f"Archivo guardado:\n{archivo}")
+
         except ImportError:
-            QMessageBox.critical(
-                self,
-                "Error",
-                "Se requiere 'openpyxl' para exportar.\n\nInstale con: pip install openpyxl"
-            )
+            QMessageBox.critical(self, "Error",
+                                 "Se requiere 'openpyxl'.\nInstale con: pip install openpyxl")
         except Exception as e:
-            logger.error(f"Error exportando: {e}", exc_info=True)
+            logger.error(f"Error exportando Excel: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Error al exportar:\n{e}")
 
+    def actualizar_mapas(self, mapas: dict):
+        """Llamado por app_gui_qt cuando termina de cargar los mapas globales."""
+        if "clientes" in mapas or "entidades" in mapas:
+            self._cargar_clientes()
+        if "cuentas" in mapas:
+            self.cuentas_bancarias = {str(k): v for k, v in mapas["cuentas"].items()}
 
+
+# ── DialogoRegistrarPago ───────────────────────────────────────────────────────
 class DialogoRegistrarPago(QDialog):
-    """Diálogo para registrar un pago"""
-    
-    def __init__(self, cuenta, clientes_mapa, moneda, parent=None):
+    """Diálogo para registrar un pago directo a una factura."""
+
+    def __init__(self, cuenta: dict, clientes_mapa: dict,
+                 cuentas_bancarias: dict, moneda: str, parent=None):
         super().__init__(parent)
-        self.cuenta = cuenta
         self.moneda = moneda
-        
+        self._cuenta_id_sel: str | None = None
+
         cliente_nombre = clientes_mapa.get(cuenta['cliente_id'], 'Cliente')
-        
         self.setWindowTitle("Registrar Pago")
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(460)
         self.setStyleSheet(CUENTAS_STYLE)
-        
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 25, 25, 25)
-        layout.setSpacing(20)
-        
-        # Título
+        layout.setSpacing(18)
+
         titulo = QLabel("💵 Registrar Pago")
-        titulo.setStyleSheet("font-size: 16pt; font-weight: bold; color: #1F2937;")
+        titulo.setStyleSheet("font-size:16pt; font-weight:bold; color:#1F2937;")
         titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(titulo)
-        
-        # Info de la cuenta
-        info_frame = QFrame()
-        info_frame.setStyleSheet("background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 15px;")
-        info_layout = QVBoxLayout(info_frame)
-        
-        lbl_cliente = QLabel(f"<b>Cliente:</b> {cliente_nombre}")
-        lbl_factura = QLabel(f"<b>Factura:</b> {cuenta['factura']}")
-        lbl_saldo = QLabel(f"<b>Saldo Pendiente:</b> <span style='color: #DC2626; font-size: 14pt;'>{moneda} {cuenta['saldo']:,.2f}</span>")
-        
-        info_layout.addWidget(lbl_cliente)
-        info_layout.addWidget(lbl_factura)
-        info_layout.addWidget(lbl_saldo)
-        
-        layout.addWidget(info_frame)
-        
+
+        # Info factura
+        info = QFrame()
+        info.setStyleSheet("background:#F9FAFB; border:1px solid #E5E7EB; border-radius:6px; padding:12px;")
+        il = QVBoxLayout(info)
+        il.addWidget(QLabel(f"<b>Cliente:</b> {cliente_nombre}"))
+        il.addWidget(QLabel(f"<b>Factura:</b> {cuenta['factura']}"))
+        il.addWidget(QLabel(
+            f"<b>Saldo Pendiente:</b> "
+            f"<span style='color:#DC2626; font-size:13pt;'>"
+            f"{moneda} {cuenta['saldo']:,.2f}</span>"))
+        layout.addWidget(info)
+
         # Formulario
-        form_layout = QFormLayout()
-        form_layout.setSpacing(15)
-        
-        lbl_monto = QLabel("Monto del Pago:")
-        lbl_monto.setStyleSheet("font-weight: 600; color: #374151;")
+        form = QFormLayout()
+        form.setSpacing(14)
+
         self.spin_monto = QDoubleSpinBox()
         self.spin_monto.setRange(0.01, cuenta['saldo'])
         self.spin_monto.setValue(cuenta['saldo'])
         self.spin_monto.setDecimals(2)
         self.spin_monto.setPrefix(f"{moneda} ")
-        form_layout.addRow(lbl_monto, self.spin_monto)
-        
-        lbl_fecha = QLabel("Fecha de Pago:")
-        lbl_fecha.setStyleSheet("font-weight: 600; color: #374151;")
-        self.fecha_pago = QDateEdit(calendarPopup=True)
-        self.fecha_pago.setDate(QDate.currentDate())
-        self.fecha_pago.setDisplayFormat("yyyy-MM-dd")
-        form_layout.addRow(lbl_fecha, self.fecha_pago)
-        
-        lbl_metodo = QLabel("Método de Pago:")
-        lbl_metodo.setStyleSheet("font-weight: 600; color: #374151;")
-        self.combo_metodo = QComboBox()
-        self.combo_metodo.addItems(["Transferencia", "Efectivo", "Cheque", "Tarjeta"])
-        form_layout.addRow(lbl_metodo, self.combo_metodo)
-        
-        lbl_referencia = QLabel("Referencia:")
-        lbl_referencia.setStyleSheet("font-weight: 600; color: #374151;")
-        self.txt_referencia = QLineEdit()
-        self.txt_referencia.setPlaceholderText("Número de referencia, cheque, etc...")
-        form_layout.addRow(lbl_referencia, self.txt_referencia)
-        
-        layout.addLayout(form_layout)
-        
+        form.addRow("Monto del Pago:", self.spin_monto)
+
+        self.date_pago = QDateEdit(calendarPopup=True)
+        self.date_pago.setDate(QDate.currentDate())
+        self.date_pago.setDisplayFormat("yyyy-MM-dd")
+        form.addRow("Fecha de Pago:", self.date_pago)
+
+        self.combo_cuenta = QComboBox()
+        self.combo_cuenta.addItem("— Sin cuenta —", None)
+        for cid, cnombre in sorted(cuentas_bancarias.items(), key=lambda x: x[1]):
+            self.combo_cuenta.addItem(cnombre, cid)
+        form.addRow("Cuenta Destino:", self.combo_cuenta)
+
+        self.txt_comentario = QLineEdit()
+        self.txt_comentario.setPlaceholderText("Referencia, número de transferencia, etc.")
+        form.addRow("Comentario:", self.txt_comentario)
+
+        layout.addLayout(form)
+
         # Botones
-        botones_layout = QHBoxLayout()
-        
-        btn_guardar = QPushButton("💾 Registrar Pago")
-        btn_guardar.setProperty("class", "success")
-        btn_guardar.clicked.connect(self.accept)
-        btn_guardar.setMinimumWidth(150)
-        botones_layout.addWidget(btn_guardar)
-        
-        btn_cancelar = QPushButton("✖️ Cancelar")
-        btn_cancelar.setProperty("class", "secondary")
-        btn_cancelar.clicked.connect(self.reject)
-        btn_cancelar.setMinimumWidth(120)
-        botones_layout.addWidget(btn_cancelar)
-        
-        layout.addLayout(botones_layout)
-    
-    def get_monto_pago(self):
+        btns = QHBoxLayout()
+        btn_ok = QPushButton("💾 Registrar")
+        btn_ok.setProperty("class", "success")
+        btn_ok.setMinimumWidth(150)
+        btn_ok.clicked.connect(self.accept)
+        btns.addWidget(btn_ok)
+
+        btn_cancel = QPushButton("✖️ Cancelar")
+        btn_cancel.setProperty("class", "secondary")
+        btn_cancel.setMinimumWidth(120)
+        btn_cancel.clicked.connect(self.reject)
+        btns.addWidget(btn_cancel)
+        layout.addLayout(btns)
+
+    def get_monto(self) -> float:
         return self.spin_monto.value()
 
+    def get_fecha(self) -> str:
+        return self.date_pago.date().toString("yyyy-MM-dd")
 
+    def get_cuenta_id(self) -> str | None:
+        return self.combo_cuenta.currentData()
+
+    def get_comentario(self) -> str:
+        return self.txt_comentario.text().strip()
+
+
+# ── DialogoRecordatorio ────────────────────────────────────────────────────────
 class DialogoRecordatorio(QDialog):
-    """Diálogo para enviar recordatorio"""
-    
-    def __init__(self, cliente_nombre, mensaje, parent=None):
+    """Diálogo para revisar/editar el mensaje de recordatorio antes de enviarlo."""
+
+    def __init__(self, cliente_nombre: str, mensaje: str, parent=None):
         super().__init__(parent)
-        
-        self.setWindowTitle("Enviar Recordatorio")
-        self.setMinimumSize(500, 400)
+        self.setWindowTitle("Recordatorio de Pago")
+        self.setMinimumSize(500, 380)
         self.setStyleSheet(CUENTAS_STYLE)
-        
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 25, 25, 25)
         layout.setSpacing(15)
-        
-        titulo = QLabel(f"📧 Recordatorio para {cliente_nombre}")
-        titulo.setStyleSheet("font-size: 14pt; font-weight: bold; color: #1F2937;")
+
+        titulo = QLabel(f"📱 Recordatorio para {cliente_nombre}")
+        titulo.setStyleSheet("font-size:14pt; font-weight:bold; color:#1F2937;")
         layout.addWidget(titulo)
-        
-        lbl_mensaje = QLabel("Mensaje:")
-        lbl_mensaje.setStyleSheet("font-weight: 600; color: #374151;")
-        layout.addWidget(lbl_mensaje)
-        
+
+        layout.addWidget(QLabel("Mensaje (puedes editarlo antes de enviar):"))
         self.txt_mensaje = QTextEdit()
         self.txt_mensaje.setPlainText(mensaje)
         layout.addWidget(self.txt_mensaje)
-        
-        botones_layout = QHBoxLayout()
-        
-        btn_enviar = QPushButton("📤 Enviar")
+
+        btns = QHBoxLayout()
+        btn_enviar = QPushButton("📱 Enviar por WhatsApp")
+        btn_enviar.setProperty("class", "success")
         btn_enviar.clicked.connect(self.accept)
-        botones_layout.addWidget(btn_enviar)
-        
-        btn_cancelar = QPushButton("✖️ Cancelar")
-        btn_cancelar.setProperty("class", "secondary")
-        btn_cancelar.clicked.connect(self.reject)
-        botones_layout.addWidget(btn_cancelar)
-        
-        layout.addLayout(botones_layout)
+        btns.addWidget(btn_enviar)
+
+        btn_cancel = QPushButton("✖️ Cancelar")
+        btn_cancel.setProperty("class", "secondary")
+        btn_cancel.clicked.connect(self.reject)
+        btns.addWidget(btn_cancel)
+        layout.addLayout(btns)
+
+    def get_mensaje(self) -> str:
+        return self.txt_mensaje.toPlainText()
