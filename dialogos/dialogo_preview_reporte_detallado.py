@@ -583,16 +583,35 @@ class DialogoPreviewReporteDetallado(QDialog):
             alquileres = self.fm.obtener_alquileres(filtros_alq) or []
             total_alquileres = sum(float(a.get("monto", 0) or 0) for a in alquileres)
 
-            # Total abonos
+            # Total abonos — filtrados según los clientes de los alquileres del período/equipo
             if filtros["cliente_id"]:
+                # Filtro explícito por cliente
                 abonos = self.fm.obtener_abonos(
                     cliente_id=filtros["cliente_id"],
                     fecha_inicio=fi,
                     fecha_fin=ff,
                 ) or []
+                total_abonos = sum(float(a.get("monto", 0) or 0) for a in abonos)
+            elif equipo_filtro:
+                # Filtro solo por equipo: sumar abonos de los clientes que aparecen
+                # en los alquileres filtrados, para no traer abonos de otros equipos
+                clientes_del_equipo = {
+                    str(a.get("cliente_id", ""))
+                    for a in alquileres
+                    if a.get("cliente_id")
+                }
+                total_abonos = 0.0
+                for cid in clientes_del_equipo:
+                    abonos_c = self.fm.obtener_abonos(
+                        cliente_id=cid,
+                        fecha_inicio=fi,
+                        fecha_fin=ff,
+                    ) or []
+                    total_abonos += sum(float(a.get("monto", 0) or 0) for a in abonos_c)
             else:
+                # Sin filtros específicos: todos los abonos del período
                 abonos = self.fm.obtener_abonos(fecha_inicio=fi, fecha_fin=ff) or []
-            total_abonos = sum(float(a.get("monto", 0) or 0) for a in abonos)
+                total_abonos = sum(float(a.get("monto", 0) or 0) for a in abonos)
 
             # Gastos
             filtros_gastos = {"fecha_inicio": fi, "fecha_fin": ff}
@@ -723,6 +742,36 @@ class DialogoPreviewReporteDetallado(QDialog):
             if not file_path:
                 return
 
+            # Obtener gastos del período para incluirlos en el reporte
+            try:
+                filtros_gastos = {
+                    "fecha_inicio": filtros["fecha_inicio"],
+                    "fecha_fin": filtros["fecha_fin"],
+                }
+                if filtros.get("equipo_id"):
+                    filtros_gastos["equipo_id"] = filtros["equipo_id"]
+                gastos_list = self.fm.obtener_gastos(filtros_gastos) or []
+            except Exception as e:
+                logger.error(f"Error obteniendo gastos para exportar: {e}", exc_info=True)
+                gastos_list = []
+
+            # Obtener pagos de operadores del período para incluirlos en el reporte
+            try:
+                filtros_pagos = {
+                    "fecha_inicio": filtros["fecha_inicio"],
+                    "fecha_fin": filtros["fecha_fin"],
+                }
+                pagos_op_list = self.fm.obtener_pagos_operadores(filtros_pagos) or []
+                # Filtrar por equipo si aplica
+                if filtros.get("equipo_id"):
+                    pagos_op_list = [
+                        p for p in pagos_op_list
+                        if str(p.get("equipo_id") or "") == filtros["equipo_id"]
+                    ]
+            except Exception as e:
+                logger.error(f"Error obteniendo pagos operadores para exportar: {e}", exc_info=True)
+                pagos_op_list = []
+
             column_map = {
                 "fecha": "Fecha",
                 "cliente": "Cliente",
@@ -747,15 +796,18 @@ class DialogoPreviewReporteDetallado(QDialog):
                 column_map=column_map,
             )
 
-            # Pasar datos de rendimientos y totales al generador
+            # Pasar datos de rendimientos, totales, gastos y pagos al generador
             rg.rendimientos_por_equipo = getattr(self, "_rendimientos_data", [])
             rg.totales_globales = getattr(self, "_totales_data", {})
             rg.equipos_mapa = self.equipos_mapa
+            rg.operadores_mapa = self.operadores_mapa
+            rg.gastos_list = gastos_list
+            rg.pagos_op_list = pagos_op_list
 
             if formato == "pdf":
-                ok, error = rg.to_pdf_detallado(file_path)
+                ok, error = rg.to_pdf_reporte_detallado(file_path)
             else:
-                ok, error = rg.to_excel_detallado(file_path)
+                ok, error = rg.to_excel(file_path)
 
             if ok:
                 QMessageBox.information(

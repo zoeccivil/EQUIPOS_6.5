@@ -278,6 +278,57 @@ class AppGUI(QMainWindow):
             self.vistas["vista_reportes"] = 4
 
 
+        # ========== VISTA: COMBUSTIBLE ==========
+        try:
+            self.combustible_tab = GestorCombustible(self.fm, self.config)
+            scroll_combustible = QScrollArea()
+            scroll_combustible.setWidgetResizable(True)
+            scroll_combustible.setWidget(self.combustible_tab)
+            scroll_combustible.setStyleSheet("QScrollArea { border: none; }")
+            self.stackedWidget.addWidget(scroll_combustible)
+            self.vistas["vista_combustible"] = 5
+            logger.info("✅ Vista Combustible cargada")
+        except Exception as e:
+            logger.error(f"Error creando Combustible: {e}", exc_info=True)
+            placeholder = QLabel("Combustible\n\n❌ Error al cargar")
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.stackedWidget.addWidget(placeholder)
+            self.vistas["vista_combustible"] = 5
+
+        # ========== VISTA: CUENTAS POR COBRAR ==========
+        try:
+            self.cuentas_tab = CuentasPorCobrar(self.fm, self.config)
+            scroll_cuentas = QScrollArea()
+            scroll_cuentas.setWidgetResizable(True)
+            scroll_cuentas.setWidget(self.cuentas_tab)
+            scroll_cuentas.setStyleSheet("QScrollArea { border: none; }")
+            self.stackedWidget.addWidget(scroll_cuentas)
+            self.vistas["vista_cuentas"] = 6
+            logger.info("✅ Vista Cuentas por Cobrar cargada")
+        except Exception as e:
+            logger.error(f"Error creando Cuentas por Cobrar: {e}", exc_info=True)
+            placeholder = QLabel("Cuentas por Cobrar\n\n❌ Error al cargar")
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.stackedWidget.addWidget(placeholder)
+            self.vistas["vista_cuentas"] = 6
+
+        # ========== VISTA: WHATSAPP ==========
+        try:
+            self.whatsapp_tab = WhatsAppIntegration(self.fm, self.config)
+            scroll_whatsapp = QScrollArea()
+            scroll_whatsapp.setWidgetResizable(True)
+            scroll_whatsapp.setWidget(self.whatsapp_tab)
+            scroll_whatsapp.setStyleSheet("QScrollArea { border: none; }")
+            self.stackedWidget.addWidget(scroll_whatsapp)
+            self.vistas["vista_whatsapp"] = 7
+            logger.info("✅ Vista WhatsApp cargada")
+        except Exception as e:
+            logger.error(f"Error creando WhatsApp: {e}", exc_info=True)
+            placeholder = QLabel("WhatsApp\n\n❌ Error al cargar")
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.stackedWidget.addWidget(placeholder)
+            self.vistas["vista_whatsapp"] = 7
+
     def _cambiar_vista(self, vista_nombre: str, titulo: str):
         """
         Cambia la vista activa y actualiza el TopBar.
@@ -310,21 +361,21 @@ class AppGUI(QMainWindow):
         """Abre el diálogo de configuración"""
         try:
             from dialogos.configuracion_dialog import ConfiguracionDialog
+            tema_anterior = self.config.get("app", {}).get("tema", "Oscuro")
             dlg = ConfiguracionDialog(self.fm, self.config, parent=self)
-            if dlg.exec():
-                # Recargar configuración si cambió
-                pass
-        except ImportError:
-            # Si no existe el diálogo, mostrar mensaje
-            QMessageBox.information(
-                self,
-                "Configuración",
-                "El diálogo de configuración aún no está implementado.\n\n"
-                "Funcionalidades disponibles:\n"
-                "• Cambio de moneda\n"
-                "• Gestión de proyecto\n"
-                "• Backup de datos"
-            )
+            if dlg.exec() and dlg.config_modificada:
+                # Aplicar tema si cambió
+                tema_nuevo = self.config.get("app", {}).get("tema", "Oscuro")
+                if tema_nuevo != tema_anterior:
+                    try:
+                        from theme_manager import ThemeManager
+                        ThemeManager.apply_theme(QApplication.instance(), tema_nuevo)
+                    except Exception as te:
+                        logger.warning(f"No se pudo cambiar tema en caliente: {te}")
+                        QMessageBox.information(
+                            self, "Tema",
+                            "El tema se aplicará al reiniciar la aplicación."
+                        )
         except Exception as e:
             QMessageBox.warning(
                 self,
@@ -437,11 +488,14 @@ class AppGUI(QMainWindow):
         # Crear botones de navegación
 # En _crear_sidebar(), en la lista nav_items:
         nav_items = [
-            ("Dashboard", "dashboard", "vista_dashboard"),
-            ("Alquileres", "agriculture", "vista_alquileres"),
-            ("Gastos", "payments", "vista_gastos"),
+            ("Dashboard",        "dashboard",   "vista_dashboard"),
+            ("Alquileres",       "agriculture", "vista_alquileres"),
+            ("Gastos",           "payments",    "vista_gastos"),
             ("Pagos Operadores", "engineering", "vista_pagos_operadores"),
-            ("Reportes", "assessment", "vista_reportes"),  # ← NUEVO
+            ("Reportes",         "assessment",  "vista_reportes"),
+            ("Combustible",      "local_gas_station", "vista_combustible"),
+            ("Cuentas x Cobrar", "account_balance",   "vista_cuentas"),
+            ("WhatsApp",         "chat",               "vista_whatsapp"),
         ]
         
         for text, icon_name, view_name in nav_items:
@@ -578,6 +632,10 @@ class AppGUI(QMainWindow):
             "🔧 Mantenimientos", self._gestionar_mantenimientos
         )
         gestion_menu.addAction("💵 Gestionar Abonos", self._gestionar_abonos)
+        gestion_menu.addSeparator()
+        gestion_menu.addAction(
+            "🏷️ Categorías y Subcategorías", self._gestionar_categorias
+        )
 
         # Menú Reportes
         reportes_menu = menubar.addMenu("Reportes")
@@ -880,6 +938,17 @@ class AppGUI(QMainWindow):
                 "Error",
                 f"Error al abrir gestión de abonos:\n{str(e)}",
             )
+
+    def _gestionar_categorias(self):
+        """Abre el gestor de categorías y subcategorías."""
+        try:
+            from dialogos.categorias_dialog import CategoriasDialog
+            dlg = CategoriasDialog(self.fm, parent=self)
+            dlg.cambios_realizados.connect(self._cargar_mapas_y_poblar_tabs)
+            dlg.exec()
+        except Exception as e:
+            logger.error(f"Error al abrir gestor de categorías: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"No se pudo abrir el gestor:\n{e}")
 
     # ==================== Menú Configuración ====================
 
@@ -1912,7 +1981,13 @@ class AppGUI(QMainWindow):
                 except Exception as e:
                     logger.error(f"Error actualizando Reportes: {e}")
 
-
+            # Actualizar Combustible
+            if hasattr(self, 'combustible_tab') and hasattr(self.combustible_tab, 'actualizar_mapas'):
+                try:
+                    self.combustible_tab.actualizar_mapas(mapas_completos)
+                    logger.info("✅ Combustible actualizado")
+                except Exception as e:
+                    logger.error(f"Error actualizando Combustible: {e}")
 
             logger.info("✅ Mapas y vistas cargados exitosamente")
 

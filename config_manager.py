@@ -83,7 +83,7 @@ def crear_configuracion_defecto() -> Dict[str, Any]:
         "firebase": {
             "credentials_path": "firebase_credentials.json",
             "project_id": "equipos-zoec",
-            "storage_bucket": "equipos-zoec.firebasestorage.app",  # <--- TU BUCKET REAL
+            "storage_bucket": "equipos-zoec.firebasestorage.app",
         },
         "backup": {
             "ruta_backup_sqlite": "./backups/equipos_backup.db",
@@ -92,9 +92,32 @@ def crear_configuracion_defecto() -> Dict[str, Any]:
             "ultimo_backup": None
         },
         "app": {
-            "tema": "claro",
+            "tema": "Oscuro",
+            "moneda": "RD$",
+            "formato_fecha": "yyyy-MM-dd",
             "idioma": "es",
             "ventana_maximizada": False
+        },
+        "reportes": {
+            "empresa": "",
+            "rnc": "",
+            "direccion": "",
+            "telefono": "",
+            "email": "",
+            "logo_path": ""
+        },
+        "whatsapp": {
+            "provider": "twilio",
+            "twilio_account_sid": "",
+            "twilio_auth_token": "",
+            "twilio_from": "",
+            "api_token": "",
+            "phone_id": "",
+            "recordatorios_auto": {
+                "activo": False,
+                "dias_antes": 3,
+                "hora": "09:00"
+            }
         }
     }
 
@@ -128,6 +151,24 @@ def _completar_config_con_defecto(config: Dict[str, Any]) -> Dict[str, Any]:
         config["app"] = {}
     for k, v in defecto["app"].items():
         config["app"].setdefault(k, v)
+
+    # reportes
+    if "reportes" not in config or not isinstance(config["reportes"], dict):
+        config["reportes"] = {}
+    for k, v in defecto["reportes"].items():
+        config["reportes"].setdefault(k, v)
+
+    # whatsapp
+    if "whatsapp" not in config or not isinstance(config["whatsapp"], dict):
+        config["whatsapp"] = {}
+    for k, v in defecto["whatsapp"].items():
+        if k == "recordatorios_auto":
+            if k not in config["whatsapp"] or not isinstance(config["whatsapp"][k], dict):
+                config["whatsapp"][k] = {}
+            for rk, rv in v.items():
+                config["whatsapp"][k].setdefault(rk, rv)
+        else:
+            config["whatsapp"].setdefault(k, v)
 
     return config
 

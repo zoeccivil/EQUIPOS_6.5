@@ -178,198 +178,90 @@ QListWidget::item:selected {
 
 class WhatsAppManager:
     """
-    Gestor de conexión con WhatsApp Business API
-    Soporta Twilio y API oficial de WhatsApp
+    Gestor de conexión con WhatsApp via Green-API
+    https://green-api.com  —  usa el teléfono bot ya configurado
     """
-    
+
     def __init__(self, config: dict):
         self.config = config
-        self.provider = config.get('whatsapp', {}).get('provider', 'twilio')
-        
-        # Credenciales Twilio
-        self.twilio_account_sid = config.get('whatsapp', {}).get('twilio_account_sid', '')
-        self.twilio_auth_token = config.get('whatsapp', {}).get('twilio_auth_token', '')
-        self.twilio_from = config.get('whatsapp', {}).get('twilio_from', '')
-        
-        # Credenciales WhatsApp Business API
-        self.whatsapp_token = config.get('whatsapp', {}).get('api_token', '')
-        self.whatsapp_phone_id = config.get('whatsapp', {}).get('phone_id', '')
-        
-        self.conectado = False
-    
-    def verificar_conexion(self):
-        """Verifica si las credenciales son válidas"""
-        try:
-            if self.provider == 'twilio':
-                return self._verificar_twilio()
-            elif self.provider == 'whatsapp_business':
-                return self._verificar_whatsapp_business()
-            else:
-                return False
-        except Exception as e:
-            logger.error(f"Error verificando conexión WhatsApp: {e}", exc_info=True)
+        wa = config.get('whatsapp', {})
+        self.id_instance = wa.get('greenapi_instance_id', '')
+        self.api_token   = wa.get('greenapi_token', '')
+        self.conectado   = False
+
+        if self.id_instance and self.api_token:
+            self.base_url = (
+                f"https://api.green-api.com/waInstance{self.id_instance}"
+            )
+        else:
+            self.base_url = ''
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _listo(self) -> bool:
+        return bool(self.id_instance and self.api_token)
+
+    def _format_phone(self, numero: str) -> str:
+        """Convierte +18293757344  →  18293757344@c.us"""
+        clean = numero.replace('whatsapp:', '').replace('+', '').replace('-', '').replace(' ', '').strip()
+        return f"{clean}@c.us"
+
+    # ── verificación ─────────────────────────────────────────────────────────
+
+    def verificar_conexion(self) -> bool:
+        """Consulta getStateInstance para verificar que la instancia esté activa."""
+        if not self._listo():
             return False
-    
-    def _verificar_twilio(self):
-        """Verifica credenciales de Twilio"""
-        if not all([self.twilio_account_sid, self.twilio_auth_token, self.twilio_from]):
-            return False
-        
         try:
-            from twilio.rest import Client
-            client = Client(self.twilio_account_sid, self.twilio_auth_token)
-            # Intenta obtener información de la cuenta
-            account = client.api.accounts(self.twilio_account_sid).fetch()
-            self.conectado = True
-            return True
-        except ImportError:
-            logger.warning("Twilio no está instalado. Instale con: pip install twilio")
+            url = f"{self.base_url}/getStateInstance/{self.api_token}"
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                estado = r.json().get('stateInstance', '')
+                self.conectado = estado == 'authorized'
+                logger.info(f"Green-API state: {estado}")
+                return self.conectado
             return False
         except Exception as e:
-            logger.error(f"Error verificando Twilio: {e}", exc_info=True)
+            logger.error(f"Error verificando Green-API: {e}")
             return False
-    
-    def _verificar_whatsapp_business(self):
-        """Verifica credenciales de WhatsApp Business API"""
-        if not all([self.whatsapp_token, self.whatsapp_phone_id]):
-            return False
-        
-        try:
-            url = f"https://graph.facebook.com/v18.0/{self.whatsapp_phone_id}"
-            headers = {"Authorization": f"Bearer {self.whatsapp_token}"}
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            self.conectado = response.status_code == 200
-            return self.conectado
-        except Exception as e:
-            logger.error(f"Error verificando WhatsApp Business: {e}", exc_info=True)
-            return False
-    
+
+    # ── envío ─────────────────────────────────────────────────────────────────
+
     def enviar_mensaje(self, numero: str, mensaje: str) -> tuple:
         """
-        Envía un mensaje de WhatsApp
-        
+        Envía un mensaje de WhatsApp via Green-API.
+
         Args:
-            numero: Número de teléfono en formato internacional (+1234567890)
-            mensaje: Texto del mensaje
-            
+            numero: teléfono en formato internacional (+18291234567)
+            mensaje: texto del mensaje
+
         Returns:
-            tuple: (éxito: bool, mensaje_id o error: str)
+            (True, idMessage) o (False, descripción_error)
         """
+        if not self._listo():
+            return False, "Green-API no configurado (falta Instance ID o Token)"
         try:
-            # Validar formato de número
-            if not numero.startswith('+'):
-                numero = '+' + numero.replace('-', '').replace(' ', '')
-            
-            if self.provider == 'twilio':
-                return self._enviar_twilio(numero, mensaje)
-            elif self.provider == 'whatsapp_business':
-                return self._enviar_whatsapp_business(numero, mensaje)
-            else:
-                return False, "Proveedor no configurado"
-                
+            chat_id = self._format_phone(numero)
+            url     = f"{self.base_url}/sendMessage/{self.api_token}"
+            payload = {"chatId": chat_id, "message": mensaje}
+
+            r = requests.post(url, json=payload, timeout=30)
+            r.raise_for_status()
+
+            msg_id = r.json().get('idMessage', 'ok')
+            logger.info(f"Green-API mensaje enviado a {chat_id}. ID: {msg_id}")
+            return True, msg_id
+
         except Exception as e:
-            logger.error(f"Error enviando mensaje WhatsApp: {e}", exc_info=True)
+            logger.error(f"Error Green-API enviar_mensaje: {e}")
             return False, str(e)
-    
-    def _enviar_twilio(self, numero: str, mensaje: str):
-        """Envía mensaje vía Twilio"""
-        try:
-            from twilio.rest import Client
-            
-            client = Client(self.twilio_account_sid, self.twilio_auth_token)
-            
-            message = client.messages.create(
-                from_=f'whatsapp:{self.twilio_from}',
-                body=mensaje,
-                to=f'whatsapp:{numero}'
-            )
-            
-            return True, message.sid
-            
-        except ImportError:
-            return False, "Twilio no está instalado. Instale con: pip install twilio"
-        except Exception as e:
-            return False, str(e)
-    
-    def _enviar_whatsapp_business(self, numero: str, mensaje: str):
-        """Envía mensaje vía WhatsApp Business API"""
-        try:
-            url = f"https://graph.facebook.com/v18.0/{self.whatsapp_phone_id}/messages"
-            
-            headers = {
-                "Authorization": f"Bearer {self.whatsapp_token}",
-                "Content-Type": "application/json"
-            }
-            
-            data = {
-                "messaging_product": "whatsapp",
-                "to": numero.replace('+', ''),
-                "type": "text",
-                "text": {"body": mensaje}
-            }
-            
-            response = requests.post(url, headers=headers, json=data, timeout=30)
-            
-            if response.status_code == 200:
-                result = response.json()
-                message_id = result.get('messages', [{}])[0].get('id', 'unknown')
-                return True, message_id
-            else:
-                error = response.json().get('error', {}).get('message', 'Error desconocido')
-                return False, error
-                
-        except Exception as e:
-            return False, str(e)
-    
+
     def enviar_mensaje_template(self, numero: str, template_name: str, parametros: list) -> tuple:
-        """
-        Envía un mensaje usando una plantilla pre-aprobada
-        Solo disponible en WhatsApp Business API
-        """
-        if self.provider != 'whatsapp_business':
-            return False, "Templates solo disponibles en WhatsApp Business API"
-        
-        try:
-            url = f"https://graph.facebook.com/v18.0/{self.whatsapp_phone_id}/messages"
-            
-            headers = {
-                "Authorization": f"Bearer {self.whatsapp_token}",
-                "Content-Type": "application/json"
-            }
-            
-            # Construir componentes de la plantilla
-            components = []
-            if parametros:
-                components.append({
-                    "type": "body",
-                    "parameters": [{"type": "text", "text": str(p)} for p in parametros]
-                })
-            
-            data = {
-                "messaging_product": "whatsapp",
-                "to": numero.replace('+', ''),
-                "type": "template",
-                "template": {
-                    "name": template_name,
-                    "language": {"code": "es"},
-                    "components": components
-                }
-            }
-            
-            response = requests.post(url, headers=headers, json=data, timeout=30)
-            
-            if response.status_code == 200:
-                result = response.json()
-                message_id = result.get('messages', [{}])[0].get('id', 'unknown')
-                return True, message_id
-            else:
-                error = response.json().get('error', {}).get('message', 'Error desconocido')
-                return False, error
-                
-        except Exception as e:
-            logger.error(f"Error enviando template: {e}", exc_info=True)
-            return False, str(e)
+        """Alias que arma el texto con los parámetros y lo envía como mensaje normal."""
+        texto = template_name
+        for i, p in enumerate(parametros):
+            texto = texto.replace(f"{{{{{i+1}}}}}", str(p))
+        return self.enviar_mensaje(numero, texto)
 
 
 class WhatsAppIntegration(QWidget):
@@ -389,7 +281,9 @@ class WhatsAppIntegration(QWidget):
         self.setStyleSheet(WHATSAPP_STYLE)
         
         self._init_ui()
-        self._verificar_conexion()
+        # Solo verificar si ya hay credenciales configuradas
+        if self.whatsapp_manager._listo():
+            self._verificar_conexion()
     
     def _init_ui(self):
         """Inicializa la interfaz"""
@@ -400,14 +294,14 @@ class WhatsAppIntegration(QWidget):
         # Header
         header_layout = QHBoxLayout()
         
-        titulo = QLabel("📱 WhatsApp Business")
+        titulo = QLabel("📱 WhatsApp – Green-API")
         titulo.setProperty("class", "whatsapp-title")
         header_layout.addWidget(titulo)
-        
+
         header_layout.addStretch()
-        
-        self.lbl_estado = QLabel("● Desconectado")
-        self.lbl_estado.setStyleSheet("font-size: 11pt; font-weight: bold; color: #DC2626;")
+
+        self.lbl_estado = QLabel("● Sin configurar")
+        self.lbl_estado.setStyleSheet("font-size: 11pt; font-weight: bold; color: #6B7280;")
         header_layout.addWidget(self.lbl_estado)
         
         btn_configurar = QPushButton("⚙️ Configurar")
@@ -614,28 +508,33 @@ class WhatsAppIntegration(QWidget):
         self._cargar_clientes()
     
     def _verificar_conexion(self):
-        """Verifica la conexión con WhatsApp"""
+        """Verifica la conexión con WhatsApp (Green-API)"""
+        if not self.whatsapp_manager._listo():
+            self.lbl_estado.setText("● Sin configurar")
+            self.lbl_estado.setStyleSheet("font-size: 11pt; font-weight: bold; color: #6B7280;")
+            self.btn_enviar_mensaje.setEnabled(False)
+            return
+
         if self.whatsapp_manager.verificar_conexion():
             self.lbl_estado.setText("● Conectado")
             self.lbl_estado.setStyleSheet("font-size: 11pt; font-weight: bold; color: #059669;")
             self.btn_enviar_mensaje.setEnabled(True)
-            
             QMessageBox.information(
                 self,
                 "Conexión Exitosa",
-                "✅ Conectado correctamente a WhatsApp Business.\n\n"
-                f"Proveedor: {self.whatsapp_manager.provider.upper()}"
+                "✅ Instancia Green-API autorizada y activa.\n\n"
+                f"Instance ID: {self.whatsapp_manager.id_instance}"
             )
         else:
             self.lbl_estado.setText("● Desconectado")
             self.lbl_estado.setStyleSheet("font-size: 11pt; font-weight: bold; color: #DC2626;")
             self.btn_enviar_mensaje.setEnabled(False)
-            
             QMessageBox.warning(
                 self,
                 "Sin Conexión",
-                "⚠️ No se pudo conectar a WhatsApp Business.\n\n"
-                "Por favor, configure sus credenciales."
+                "⚠️ No se pudo conectar a Green-API.\n\n"
+                "Verifica que el teléfono esté vinculado en console.green-api.com\n"
+                "y que el Instance ID y Token sean correctos."
             )
     
     def _configurar_whatsapp(self):
@@ -648,27 +547,36 @@ class WhatsAppIntegration(QWidget):
             self._verificar_conexion()
     
     def _cargar_clientes(self):
-        """Carga la lista de clientes"""
+        """Carga la lista de clientes que tienen teléfono WhatsApp registrado"""
         try:
             clientes = self.fm.obtener_entidades(tipo="Cliente", activo=True)
-            
+
             self.combo_destinatario.clear()
             self.combo_destinatario.addItem("Seleccionar cliente...", None)
-            
+
+            sin_telefono = 0
             for cliente in clientes:
-                nombre = cliente.get('nombre', '')
-                contacto = cliente.get('contacto', '')
-                self.combo_destinatario.addItem(f"{nombre} - {contacto}", cliente)
-                
+                nombre   = cliente.get('nombre', '')
+                telefono = cliente.get('telefono_whatsapp', '').strip()
+                if telefono:
+                    self.combo_destinatario.addItem(f"{nombre}  {telefono}", cliente)
+                else:
+                    sin_telefono += 1
+
+            if sin_telefono:
+                self.combo_destinatario.addItem(
+                    f"── {sin_telefono} cliente(s) sin teléfono ──", None
+                )
+
         except Exception as e:
             logger.error(f"Error cargando clientes: {e}", exc_info=True)
-    
+
     def _cargar_numero_cliente(self):
-        """Carga el número del cliente seleccionado"""
+        """Carga el número WhatsApp del cliente seleccionado"""
         cliente = self.combo_destinatario.currentData()
         if cliente:
-            contacto = cliente.get('contacto', '')
-            self.txt_numero.setText(contacto)
+            telefono = cliente.get('telefono_whatsapp', '').strip()
+            self.txt_numero.setText(telefono)
     
     def _toggle_tipo_mensaje(self):
         """Maneja el cambio de tipo de mensaje"""
@@ -956,183 +864,98 @@ class EnvioWhatsAppThread(QThread):
 
 
 class DialogoConfigWhatsApp(QDialog):
-    """Diálogo para configurar WhatsApp Business"""
-    
+    """Diálogo para configurar Green-API WhatsApp"""
+
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
         self.config = config.copy()
-        
-        self.setWindowTitle("Configuración de WhatsApp Business")
-        self.setMinimumWidth(600)
+        self.setWindowTitle("Configuración de WhatsApp – Green-API")
+        self.setMinimumWidth(520)
         self.setStyleSheet(WHATSAPP_STYLE)
-        
         self._init_ui()
         self._cargar_config()
-    
+
     def _init_ui(self):
-        """Inicializa la interfaz"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(25, 25, 25, 25)
         layout.setSpacing(20)
-        
-        # Título
-        titulo = QLabel("⚙️ Configuración de WhatsApp Business")
+
+        titulo = QLabel("⚙️ Configuración Green-API")
         titulo.setStyleSheet("font-size: 16pt; font-weight: bold; color: #1F2937;")
         titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(titulo)
-        
-        # Selector de proveedor
-        grupo_proveedor = QGroupBox("Proveedor")
-        layout_proveedor = QVBoxLayout(grupo_proveedor)
-        
-        self.radio_twilio = QCheckBox("Twilio (Recomendado para desarrollo)")
-        self.radio_twilio.toggled.connect(self._toggle_proveedor)
-        layout_proveedor.addWidget(self.radio_twilio)
-        
-        self.radio_whatsapp = QCheckBox("WhatsApp Business API (Producción)")
-        self.radio_whatsapp.toggled.connect(self._toggle_proveedor)
-        layout_proveedor.addWidget(self.radio_whatsapp)
-        
-        layout.addWidget(grupo_proveedor)
-        
-        # === CONFIGURACIÓN TWILIO ===
-        self.grupo_twilio = QGroupBox("Credenciales Twilio")
-        layout_twilio = QFormLayout(self.grupo_twilio)
-        layout_twilio.setSpacing(15)
-        
-        lbl_sid = QLabel("Account SID:")
-        lbl_sid.setStyleSheet("font-weight: 600;")
-        self.txt_twilio_sid = QLineEdit()
-        self.txt_twilio_sid.setPlaceholderText("ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-        layout_twilio.addRow(lbl_sid, self.txt_twilio_sid)
-        
-        lbl_token = QLabel("Auth Token:")
+
+        grupo = QGroupBox("Credenciales Green-API")
+        form  = QFormLayout(grupo)
+        form.setSpacing(15)
+
+        lbl_inst = QLabel("Instance ID:")
+        lbl_inst.setStyleSheet("font-weight: 600;")
+        self.txt_instance = QLineEdit()
+        self.txt_instance.setPlaceholderText("ej. 1101234567")
+        form.addRow(lbl_inst, self.txt_instance)
+
+        lbl_token = QLabel("API Token:")
         lbl_token.setStyleSheet("font-weight: 600;")
-        self.txt_twilio_token = QLineEdit()
-        self.txt_twilio_token.setEchoMode(QLineEdit.EchoMode.Password)
-        self.txt_twilio_token.setPlaceholderText("********************************")
-        layout_twilio.addRow(lbl_token, self.txt_twilio_token)
-        
-        lbl_from = QLabel("From Number:")
-        lbl_from.setStyleSheet("font-weight: 600;")
-        self.txt_twilio_from = QLineEdit()
-        self.txt_twilio_from.setPlaceholderText("+14155238886")
-        layout_twilio.addRow(lbl_from, self.txt_twilio_from)
-        
-        layout.addWidget(self.grupo_twilio)
-        
-        # === CONFIGURACIÓN WHATSAPP BUSINESS ===
-        self.grupo_whatsapp = QGroupBox("Credenciales WhatsApp Business API")
-        layout_whatsapp = QFormLayout(self.grupo_whatsapp)
-        layout_whatsapp.setSpacing(15)
-        
-        lbl_token_wa = QLabel("Access Token:")
-        lbl_token_wa.setStyleSheet("font-weight: 600;")
-        self.txt_whatsapp_token = QLineEdit()
-        self.txt_whatsapp_token.setEchoMode(QLineEdit.EchoMode.Password)
-        self.txt_whatsapp_token.setPlaceholderText("EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-        layout_whatsapp.addRow(lbl_token_wa, self.txt_whatsapp_token)
-        
-        lbl_phone_id = QLabel("Phone Number ID:")
-        lbl_phone_id.setStyleSheet("font-weight: 600;")
-        self.txt_whatsapp_phone_id = QLineEdit()
-        self.txt_whatsapp_phone_id.setPlaceholderText("123456789012345")
-        layout_whatsapp.addRow(lbl_phone_id, self.txt_whatsapp_phone_id)
-        
-        layout.addWidget(self.grupo_whatsapp)
-        
-        # Info
+        self.txt_token = QLineEdit()
+        self.txt_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txt_token.setPlaceholderText("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+        form.addRow(lbl_token, self.txt_token)
+
+        layout.addWidget(grupo)
+
         info = QLabel(
-            "ℹ️ <b>Cómo obtener credenciales:</b><br>"
-            "<b>Twilio:</b> Regístrate en twilio.com → Console → Account Info<br>"
-            "<b>WhatsApp Business:</b> Meta for Developers → WhatsApp → Settings"
+            "ℹ️ <b>Cómo obtener las credenciales:</b><br>"
+            "1. Entra a <b>console.green-api.com</b><br>"
+            "2. Crea o selecciona una instancia<br>"
+            "3. Copia el <b>ID de instancia</b> y el <b>API Token</b>"
         )
         info.setWordWrap(True)
-        info.setStyleSheet("background-color: #FEF3C7; padding: 10px; border-radius: 6px; color: #92400E;")
+        info.setStyleSheet(
+            "background-color: #D1FAE5; padding: 12px; border-radius: 6px; color: #065F46;"
+        )
         layout.addWidget(info)
-        
-        # Botones
-        botones_layout = QHBoxLayout()
-        
+
+        botones = QHBoxLayout()
         btn_probar = QPushButton("🧪 Probar Conexión")
         btn_probar.setProperty("class", "secondary")
         btn_probar.clicked.connect(self._probar_conexion)
-        botones_layout.addWidget(btn_probar)
-        
-        botones_layout.addStretch()
-        
+        botones.addWidget(btn_probar)
+        botones.addStretch()
         btn_guardar = QPushButton("💾 Guardar")
         btn_guardar.setProperty("class", "whatsapp")
         btn_guardar.clicked.connect(self.accept)
         btn_guardar.setMinimumWidth(120)
-        botones_layout.addWidget(btn_guardar)
-        
+        botones.addWidget(btn_guardar)
         btn_cancelar = QPushButton("✖️ Cancelar")
         btn_cancelar.setProperty("class", "secondary")
         btn_cancelar.clicked.connect(self.reject)
         btn_cancelar.setMinimumWidth(120)
-        botones_layout.addWidget(btn_cancelar)
-        
-        layout.addLayout(botones_layout)
-    
+        botones.addWidget(btn_cancelar)
+        layout.addLayout(botones)
+
     def _cargar_config(self):
-        """Carga la configuración actual"""
-        whatsapp_config = self.config.get('whatsapp', {})
-        
-        provider = whatsapp_config.get('provider', 'twilio')
-        
-        if provider == 'twilio':
-            self.radio_twilio.setChecked(True)
-            self.txt_twilio_sid.setText(whatsapp_config.get('twilio_account_sid', ''))
-            self.txt_twilio_token.setText(whatsapp_config.get('twilio_auth_token', ''))
-            self.txt_twilio_from.setText(whatsapp_config.get('twilio_from', ''))
-        else:
-            self.radio_whatsapp.setChecked(True)
-            self.txt_whatsapp_token.setText(whatsapp_config.get('api_token', ''))
-            self.txt_whatsapp_phone_id.setText(whatsapp_config.get('phone_id', ''))
-    
-    def _toggle_proveedor(self):
-        """Alterna entre proveedores"""
-        if self.radio_twilio.isChecked():
-            self.radio_whatsapp.setChecked(False)
-            self.grupo_twilio.setEnabled(True)
-            self.grupo_whatsapp.setEnabled(False)
-        elif self.radio_whatsapp.isChecked():
-            self.radio_twilio.setChecked(False)
-            self.grupo_twilio.setEnabled(False)
-            self.grupo_whatsapp.setEnabled(True)
-    
+        wa = self.config.get('whatsapp', {})
+        self.txt_instance.setText(wa.get('greenapi_instance_id', ''))
+        self.txt_token.setText(wa.get('greenapi_token', ''))
+
     def _probar_conexion(self):
-        """Prueba la conexión con las credenciales actuales"""
-        config_test = self.get_config()
-        manager = WhatsAppManager(config_test)
-        
+        manager = WhatsAppManager(self.get_config())
         if manager.verificar_conexion():
             QMessageBox.information(
-                self,
-                "Conexión Exitosa",
-                "✅ Las credenciales son válidas.\n\nConexión establecida correctamente."
+                self, "Conexión Exitosa",
+                "✅ Instancia autorizada y activa.\n\nPuedes enviar mensajes."
             )
         else:
             QMessageBox.critical(
-                self,
-                "Error de Conexión",
-                "❌ No se pudo conectar.\n\nVerifique sus credenciales."
+                self, "Error de Conexión",
+                "❌ No se pudo conectar.\n\n"
+                "Verifica Instance ID y Token, y que el teléfono esté vinculado en green-api.com"
             )
-    
-    def get_config(self):
-        """Obtiene la configuración actualizada"""
+
+    def get_config(self) -> dict:
         if 'whatsapp' not in self.config:
             self.config['whatsapp'] = {}
-        
-        if self.radio_twilio.isChecked():
-            self.config['whatsapp']['provider'] = 'twilio'
-            self.config['whatsapp']['twilio_account_sid'] = self.txt_twilio_sid.text().strip()
-            self.config['whatsapp']['twilio_auth_token'] = self.txt_twilio_token.text().strip()
-            self.config['whatsapp']['twilio_from'] = self.txt_twilio_from.text().strip()
-        else:
-            self.config['whatsapp']['provider'] = 'whatsapp_business'
-            self.config['whatsapp']['api_token'] = self.txt_whatsapp_token.text().strip()
-            self.config['whatsapp']['phone_id'] = self.txt_whatsapp_phone_id.text().strip()
-        
+        self.config['whatsapp']['greenapi_instance_id'] = self.txt_instance.text().strip()
+        self.config['whatsapp']['greenapi_token']       = self.txt_token.text().strip()
         return self.config

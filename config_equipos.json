@@ -1,6 +1,6 @@
 {
   "firebase": {
-    "credentials_path": "D:/Dropbox/PROGAIN/PROGAIN_CREDENTIALS/firebase_equipos_key.json",
+    "credentials_path": "E:/Dropbox/PROGAIN/PROGAIN_CREDENTIALS/firebase_equipos_key.json",
     "project_id": "equipos-zoec",
     "storage_bucket": "equipos-zoec.firebasestorage.app"
   },
@@ -13,6 +13,32 @@
   "app": {
     "tema": "claro",
     "idioma": "es",
-    "ventana_maximizada": false
+    "ventana_maximizada": false,
+    "moneda": "RD$",
+    "formato_fecha": "yyyy-MM-dd"
+  },
+  "whatsapp": {
+    "greenapi_instance_id": "",
+    "greenapi_token": "",
+    "telefono_contable": "",
+    "provider": "twilio",
+    "twilio_account_sid": "",
+    "twilio_auth_token": "",
+    "twilio_from": "",
+    "api_token": "",
+    "phone_id": "",
+    "recordatorios_auto": {
+      "activo": false,
+      "dias_antes": 3,
+      "hora": "09:00"
+    }
+  },
+  "reportes": {
+    "empresa": "",
+    "rnc": "",
+    "direccion": "",
+    "telefono": "",
+    "email": "",
+    "logo_path": ""
   }
 }

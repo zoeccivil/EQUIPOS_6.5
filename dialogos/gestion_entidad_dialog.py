@@ -414,9 +414,15 @@ class FormularioEntidadDialog(QDialog):
         lbl_contacto = QLabel("Contacto:")
         lbl_contacto.setStyleSheet("font-weight: 600; color: #374151;")
         self.txt_contacto = QLineEdit()
-        self.txt_contacto.setPlaceholderText("Teléfono, email, etc...")
+        self.txt_contacto.setPlaceholderText("Email, referencia, etc...")
         form_layout.addRow(lbl_contacto, self.txt_contacto)
-        
+
+        lbl_telefono = QLabel("WhatsApp:")
+        lbl_telefono.setStyleSheet("font-weight: 600; color: #374151;")
+        self.txt_telefono = QLineEdit()
+        self.txt_telefono.setPlaceholderText("+18291234567  (incluir código de país)")
+        form_layout.addRow(lbl_telefono, self.txt_telefono)
+
         layout.addLayout(form_layout)
         
         layout.addSpacing(10)
@@ -443,10 +449,12 @@ class FormularioEntidadDialog(QDialog):
         if self.entidad:
             self.txt_nombre.setText(self.entidad.get('nombre', ''))
             self.txt_contacto.setText(self.entidad.get('contacto', ''))
-    
+            self.txt_telefono.setText(self.entidad.get('telefono_whatsapp', ''))
+
     def get_datos(self) -> Dict[str, Any]:
         """Obtiene los datos del formulario."""
         return {
-            'nombre': self.txt_nombre.text().strip(),
-            'contacto': self.txt_contacto.text().strip()
+            'nombre':            self.txt_nombre.text().strip(),
+            'contacto':          self.txt_contacto.text().strip(),
+            'telefono_whatsapp': self.txt_telefono.text().strip(),
         }

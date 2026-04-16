@@ -1,19 +1,19 @@
 # gestor_combustible.py
 
 """
-Gestor de Combustible - Control de consumo y eficiencia de equipos
-Permite registrar cargas de combustible y analizar consumos
+Gestor de Combustible - Control de consumo por equipo.
+Lee directamente de la colección 'gastos' filtrando por categoría COMBUSTIBLE.
+Cada gasto de combustible tiene el campo 'galones' (unidad estándar en RD).
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QDialog, QFormLayout, QLineEdit, QDoubleSpinBox, QDateEdit,
     QComboBox, QMessageBox, QAbstractItemView, QGroupBox, QFrame,
-    QTextEdit, QFileDialog
+    QFileDialog
 )
-from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 import logging
 from datetime import datetime, timedelta
@@ -21,7 +21,7 @@ from firebase_manager import FirebaseManager
 
 logger = logging.getLogger(__name__)
 
-# Estilos CSS
+# ─── Estilos ────────────────────────────────────────────────────────────────
 COMBUSTIBLE_STYLE = """
 QWidget {
     background-color: #F3F4F6;
@@ -58,26 +58,18 @@ QPushButton {
     font-weight: 600;
     min-height: 25px;
 }
-QPushButton:hover {
-    background-color: #D97706;
-}
-QPushButton:pressed {
-    background-color: #B45309;
-}
+QPushButton:hover  { background-color: #D97706; }
+QPushButton:pressed { background-color: #B45309; }
 QPushButton[class="secondary"] {
     background-color: #E5E7EB;
     color: #374151;
 }
-QPushButton[class="secondary"]:hover {
-    background-color: #D1D5DB;
-}
+QPushButton[class="secondary"]:hover { background-color: #D1D5DB; }
 QPushButton[class="danger"] {
     background-color: #DC2626;
     color: white;
 }
-QPushButton[class="danger"]:hover {
-    background-color: #B91C1C;
-}
+QPushButton[class="danger"]:hover { background-color: #B91C1C; }
 QTableWidget {
     background-color: #FFFFFF;
     alternate-background-color: #F9FAFB;
@@ -87,9 +79,7 @@ QTableWidget {
     border: 1px solid #E5E7EB;
     border-radius: 6px;
 }
-QTableWidget::item {
-    padding: 8px;
-}
+QTableWidget::item { padding: 8px; }
 QHeaderView::section {
     background-color: #1F2937;
     color: #FFFFFF;
@@ -97,16 +87,13 @@ QHeaderView::section {
     border: none;
     font-weight: 600;
 }
-QLineEdit, QDoubleSpinBox, QDateEdit, QComboBox, QTextEdit {
+QLineEdit, QDoubleSpinBox, QDateEdit, QComboBox {
     background-color: #FFFFFF;
     border: 2px solid #E5E7EB;
     border-radius: 6px;
     padding: 8px 12px;
     color: #1F2937;
     font-size: 10pt;
-}
-QLineEdit:hover, QDoubleSpinBox:hover, QDateEdit:hover, QComboBox:hover {
-    border: 2px solid #F59E0B;
 }
 QLineEdit:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus {
     border: 2px solid #F59E0B;
@@ -131,147 +118,139 @@ QGroupBox::title {
 
 
 class StatCard(QFrame):
-    """Tarjeta de estadística"""
-    
+    """Tarjeta de estadística reutilizable."""
+
     def __init__(self, label, value, parent=None):
         super().__init__(parent)
         self.setProperty("class", "stat-card")
-        
         layout = QVBoxLayout(self)
         layout.setSpacing(5)
-        
-        lbl_label = QLabel(label)
-        lbl_label.setProperty("class", "stat-label")
-        layout.addWidget(lbl_label)
-        
+        lbl = QLabel(label)
+        lbl.setProperty("class", "stat-label")
+        layout.addWidget(lbl)
         self.lbl_value = QLabel(value)
         self.lbl_value.setProperty("class", "stat-value")
         layout.addWidget(self.lbl_value)
-    
+
     def actualizar(self, value):
         self.lbl_value.setText(value)
 
 
+# ─── Widget principal ────────────────────────────────────────────────────────
 class GestorCombustible(QWidget):
-    """Widget principal para gestión de combustible"""
-    
+    """
+    Vista de combustible: lee gastos con categoría='COMBUSTIBLE', muestra
+    estadísticas en galones y permite registrar nuevas cargas via GastoDialog.
+    """
+
     def __init__(self, fm: FirebaseManager, config: dict, parent=None):
         super().__init__(parent)
-        self.fm = fm
+        self.fm     = fm
         self.config = config
         self.moneda = config.get('app', {}).get('moneda', 'RD$')
-        
-        self.cargas = []
-        self.equipos_mapa = {}
-        
+
+        # Mapas (se populan desde app_gui_qt vía actualizar_mapas o carga propia)
+        self.equipos_mapa      = {}
+        self.cuentas_mapa      = {}
+        self.categorias_mapa   = {}
+        self.subcategorias_mapa = {}
+
+        # ID Firestore de la categoría COMBUSTIBLE (se resuelve al cargar datos)
+        self._cat_combustible_id = None
+
+        # Gastos cargados (fuente de verdad para los filtros)
+        self.gastos = []
+
         self.setStyleSheet(COMBUSTIBLE_STYLE)
-        
         self._init_ui()
-        self._cargar_equipos()
-        self._cargar_datos()
-    
+
+        # Carga inicial en diferido para no bloquear arranque
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(300, self._carga_inicial)
+
+    # ── Interfaz ─────────────────────────────────────────────────────────────
     def _init_ui(self):
-        """Inicializa la interfaz"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(20)
-        
-        # Header
-        header_layout = QHBoxLayout()
-        
+
+        # Cabecera
+        hdr = QHBoxLayout()
         titulo = QLabel("⛽ Control de Combustible")
         titulo.setProperty("class", "title")
-        header_layout.addWidget(titulo)
-        
-        header_layout.addStretch()
-        
-        # Filtro por equipo
-        lbl_equipo = QLabel("Equipo:")
-        lbl_equipo.setStyleSheet("font-weight: 600; color: #374151;")
-        header_layout.addWidget(lbl_equipo)
-        
+        hdr.addWidget(titulo)
+        hdr.addStretch()
+
+        hdr.addWidget(QLabel("Equipo:"))
         self.combo_equipo_filtro = QComboBox()
         self.combo_equipo_filtro.addItem("Todos", None)
         self.combo_equipo_filtro.currentIndexChanged.connect(self._aplicar_filtros)
-        header_layout.addWidget(self.combo_equipo_filtro)
-        
-        # Filtro por período
-        lbl_periodo = QLabel("Período:")
-        lbl_periodo.setStyleSheet("font-weight: 600; color: #374151;")
-        header_layout.addWidget(lbl_periodo)
-        
+        hdr.addWidget(self.combo_equipo_filtro)
+
+        hdr.addWidget(QLabel("Período:"))
         self.combo_periodo = QComboBox()
-        self.combo_periodo.addItem("Última Semana", 7)
         self.combo_periodo.addItem("Último Mes", 30)
         self.combo_periodo.addItem("Últimos 3 Meses", 90)
+        self.combo_periodo.addItem("Últimos 6 Meses", 180)
         self.combo_periodo.addItem("Todo", 9999)
-        self.combo_periodo.currentIndexChanged.connect(self._aplicar_filtros)
-        header_layout.addWidget(self.combo_periodo)
-        
-        btn_nueva_carga = QPushButton("➕ Nueva Carga")
-        btn_nueva_carga.clicked.connect(self._nueva_carga)
-        header_layout.addWidget(btn_nueva_carga)
-        
-        btn_actualizar = QPushButton("🔄 Actualizar")
-        btn_actualizar.clicked.connect(self._cargar_datos)
-        header_layout.addWidget(btn_actualizar)
-        
-        layout.addLayout(header_layout)
-        
-        # === ESTADÍSTICAS ===
-        stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(15)
-        
-        self.stat_total_litros = StatCard("Total Litros", "0.00 L")
-        stats_layout.addWidget(self.stat_total_litros)
-        
-        self.stat_total_costo = StatCard("Costo Total", f"{self.moneda} 0.00")
-        stats_layout.addWidget(self.stat_total_costo)
-        
-        self.stat_promedio_litro = StatCard("Precio Promedio/L", f"{self.moneda} 0.00")
-        stats_layout.addWidget(self.stat_promedio_litro)
-        
-        self.stat_eficiencia = StatCard("Eficiencia Promedio", "0.00 L/h")
-        stats_layout.addWidget(self.stat_eficiencia)
-        
-        layout.addLayout(stats_layout)
-        
-        # === GRÁFICO DE CONSUMO ===
-        grupo_grafico = QGroupBox("📈 Historial de Consumo")
-        layout_grafico = QVBoxLayout(grupo_grafico)
+        self.combo_periodo.currentIndexChanged.connect(self._cargar_datos)
+        hdr.addWidget(self.combo_periodo)
+
+        btn_nueva = QPushButton("➕ Nueva Carga")
+        btn_nueva.clicked.connect(self._nueva_carga)
+        hdr.addWidget(btn_nueva)
+
+        btn_refresh = QPushButton("🔄 Actualizar")
+        btn_refresh.clicked.connect(self._cargar_datos)
+        hdr.addWidget(btn_refresh)
+
+        layout.addLayout(hdr)
+
+        # Estadísticas
+        stats = QHBoxLayout()
+        stats.setSpacing(15)
+        self.stat_total_galones = StatCard("Total Galones", "0.000 gal")
+        self.stat_total_costo   = StatCard("Costo Total", f"{self.moneda} 0.00")
+        self.stat_precio_galon  = StatCard("Precio Promedio/Gal", f"{self.moneda} 0.00")
+        self.stat_registros     = StatCard("Registros", "0")
+        for card in (self.stat_total_galones, self.stat_total_costo,
+                     self.stat_precio_galon, self.stat_registros):
+            stats.addWidget(card)
+        layout.addLayout(stats)
+
+        # Gráfico
+        grupo_grafico = QGroupBox("📈 Historial de Consumo (galones)")
+        g_layout = QVBoxLayout(grupo_grafico)
         self.chart_view = self._crear_grafico()
-        layout_grafico.addWidget(self.chart_view)
+        g_layout.addWidget(self.chart_view)
         layout.addWidget(grupo_grafico)
-        
-        # === TABLA DE CARGAS ===
+
+        # Tabla
         grupo_tabla = QGroupBox("📋 Registro de Cargas")
-        layout_tabla = QVBoxLayout(grupo_tabla)
-        
-        # Botones de acción
-        botones_tabla_layout = QHBoxLayout()
-        
+        t_layout = QVBoxLayout(grupo_tabla)
+
+        acc = QHBoxLayout()
         btn_editar = QPushButton("✏️ Editar")
         btn_editar.clicked.connect(self._editar_carga)
-        botones_tabla_layout.addWidget(btn_editar)
-        
+        acc.addWidget(btn_editar)
+
         btn_eliminar = QPushButton("🗑️ Eliminar")
         btn_eliminar.setProperty("class", "danger")
         btn_eliminar.clicked.connect(self._eliminar_carga)
-        botones_tabla_layout.addWidget(btn_eliminar)
-        
+        acc.addWidget(btn_eliminar)
+
         btn_exportar = QPushButton("📄 Exportar Excel")
         btn_exportar.setProperty("class", "secondary")
         btn_exportar.clicked.connect(self._exportar_excel)
-        botones_tabla_layout.addWidget(btn_exportar)
-        
-        botones_tabla_layout.addStretch()
-        layout_tabla.addLayout(botones_tabla_layout)
-        
+        acc.addWidget(btn_exportar)
+        acc.addStretch()
+        t_layout.addLayout(acc)
+
         self.tabla = QTableWidget()
-        self.tabla.setColumnCount(8)
+        self.tabla.setColumnCount(7)
         self.tabla.setHorizontalHeaderLabels([
-            "ID", "Fecha", "Equipo", "Litros", "Precio/L", 
-            "Costo Total", "Horómetro", "Eficiencia (L/h)"
+            "ID", "Fecha", "Equipo", "Galones", "Precio/Gal",
+            "Costo Total", "Descripción"
         ])
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tabla.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -279,560 +258,389 @@ class GestorCombustible(QWidget):
         self.tabla.verticalHeader().setVisible(False)
         self.tabla.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.tabla.itemDoubleClicked.connect(self._editar_carga)
-        layout_tabla.addWidget(self.tabla)
-        
+        t_layout.addWidget(self.tabla)
         layout.addWidget(grupo_tabla)
-    
+
     def _crear_grafico(self):
-        """Crea el gráfico de consumo de combustible"""
         chart = QChart()
-        chart.setTitle("Consumo Diario de Combustible")
+        chart.setTitle("Galones por Fecha")
         chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
         chart.setBackgroundBrush(QColor("#FFFFFF"))
-        
-        self.series_consumo = QLineSeries()
-        self.series_consumo.setName("Litros")
-        
-        chart.addSeries(self.series_consumo)
-        
-        # Ejes
-        axis_x = QDateTimeAxis()
-        axis_x.setFormat("dd/MM")
-        axis_x.setTitleText("Fecha")
-        
-        axis_y = QValueAxis()
-        axis_y.setTitleText("Litros")
-        
-        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        
-        self.series_consumo.attachAxis(axis_x)
-        self.series_consumo.attachAxis(axis_y)
-        
+
+        self.series_galones = QLineSeries()
+        self.series_galones.setName("Galones")
+        chart.addSeries(self.series_galones)
+
+        self.axis_x = QDateTimeAxis()
+        self.axis_x.setFormat("dd/MM")
+        self.axis_x.setTitleText("Fecha")
+
+        self.axis_y = QValueAxis()
+        self.axis_y.setTitleText("Galones")
+
+        chart.addAxis(self.axis_x, Qt.AlignmentFlag.AlignBottom)
+        chart.addAxis(self.axis_y, Qt.AlignmentFlag.AlignLeft)
+        self.series_galones.attachAxis(self.axis_x)
+        self.series_galones.attachAxis(self.axis_y)
+
         chart.legend().setVisible(True)
         chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
-        
+
         chart_view = QChartView(chart)
-        chart_view.setRenderHint(chart_view.renderHints())
-        chart_view.setMinimumHeight(300)
-        
+        chart_view.setMinimumHeight(280)
         return chart_view
-    
-    def _cargar_equipos(self):
-        """Carga la lista de equipos"""
+
+    # ── Carga de datos ────────────────────────────────────────────────────────
+    def _carga_inicial(self):
+        """Carga equipos y mapas básicos, luego datos de combustible."""
+        self._cargar_mapas_propios()
+        self._cargar_datos()
+
+    def _cargar_mapas_propios(self):
+        """Carga equipos, categorías, cuentas y subcategorías desde Firebase."""
         try:
-            equipos = self.fm.obtener_equipos(activo=True)
-            self.equipos_mapa = {str(e['id']): e['nombre'] for e in equipos}
-            
+            equipos = self.fm.obtener_equipos(activo=None) or []
+            self.equipos_mapa = {str(e['id']): e.get('nombre', 'N/A') for e in equipos}
             self.combo_equipo_filtro.clear()
             self.combo_equipo_filtro.addItem("Todos", None)
-            
             for eid, nombre in sorted(self.equipos_mapa.items(), key=lambda x: x[1]):
                 self.combo_equipo_filtro.addItem(nombre, eid)
-                
         except Exception as e:
-            logger.error(f"Error cargando equipos: {e}", exc_info=True)
-    
+            logger.error(f"GestorCombustible._cargar_mapas_propios equipos: {e}", exc_info=True)
+
+        try:
+            self.categorias_mapa = {
+                str(k): v for k, v in
+                (self.fm.obtener_mapa_global("categorias") or {}).items()
+            }
+        except Exception as e:
+            logger.error(f"GestorCombustible._cargar_mapas_propios categorias: {e}", exc_info=True)
+
+        try:
+            self.cuentas_mapa = {
+                str(k): v for k, v in
+                (self.fm.obtener_mapa_global("cuentas") or {}).items()
+            }
+        except Exception as e:
+            logger.error(f"GestorCombustible._cargar_mapas_propios cuentas: {e}", exc_info=True)
+
+        try:
+            self.subcategorias_mapa = {
+                str(k): v for k, v in
+                (self.fm.obtener_mapa_global("subcategorias") or {}).items()
+            }
+        except Exception as e:
+            logger.error(f"GestorCombustible._cargar_mapas_propios subcategorias: {e}", exc_info=True)
+
+    def actualizar_mapas(self, mapas: dict):
+        """
+        Llamado por app_gui_qt cuando termina de cargar todos los mapas.
+        Refresca la lista de equipos en el filtro y los mapas internos.
+        """
+        if "equipos" in mapas:
+            self.equipos_mapa = mapas["equipos"]
+            self.combo_equipo_filtro.blockSignals(True)
+            self.combo_equipo_filtro.clear()
+            self.combo_equipo_filtro.addItem("Todos", None)
+            for eid, nombre in sorted(self.equipos_mapa.items(), key=lambda x: x[1]):
+                self.combo_equipo_filtro.addItem(nombre, eid)
+            self.combo_equipo_filtro.blockSignals(False)
+        if "categorias" in mapas:
+            self.categorias_mapa = mapas["categorias"]
+        if "cuentas" in mapas:
+            self.cuentas_mapa = mapas["cuentas"]
+        if "subcategorias" in mapas:
+            self.subcategorias_mapa = mapas["subcategorias"]
+        # Invalidar caché del id de categoría por si cambió
+        self._cat_combustible_id = None
+
+    def _resolver_cat_combustible_id(self) -> str | None:
+        """Retorna el Firestore ID de la categoría COMBUSTIBLE (con caché)."""
+        if self._cat_combustible_id:
+            return self._cat_combustible_id
+        # Buscar en el mapa local primero
+        for cid, nombre in self.categorias_mapa.items():
+            if nombre.upper() == "COMBUSTIBLE":
+                self._cat_combustible_id = cid
+                return cid
+        # Si no está en el mapa, asegurar via Firebase
+        try:
+            cid = self.fm.ensure_categoria("COMBUSTIBLE")
+            if cid:
+                self._cat_combustible_id = str(cid)
+                return self._cat_combustible_id
+        except Exception as e:
+            logger.error(f"ensure_categoria COMBUSTIBLE: {e}", exc_info=True)
+        return None
+
     def _cargar_datos(self):
-        """Carga los datos de combustible desde Firebase"""
+        """Carga gastos de combustible según el período seleccionado."""
         try:
-            # Obtener período
-            dias = self.combo_periodo.currentData()
-            fecha_inicio = (datetime.now() - timedelta(days=dias)).strftime("%Y-%m-%d")
+            dias = self.combo_periodo.currentData() or 30
+            if dias >= 9999:
+                fecha_inicio = "2000-01-01"
+            else:
+                fecha_inicio = (datetime.now() - timedelta(days=dias)).strftime("%Y-%m-%d")
             fecha_fin = datetime.now().strftime("%Y-%m-%d")
-            
-            # Cargar cargas de combustible
-            self.cargas = self.fm.obtener_cargas_combustible(
-                fecha_inicio=fecha_inicio,
-                fecha_fin=fecha_fin
-            )
-            
+
+            cat_id = self._resolver_cat_combustible_id()
+            if not cat_id:
+                logger.warning("No se encontró categoría COMBUSTIBLE")
+                self.gastos = []
+                self._aplicar_filtros()
+                return
+
+            filtros = {
+                "fecha_inicio": fecha_inicio,
+                "fecha_fin":    fecha_fin,
+                "categoria_id": cat_id,
+            }
+            self.gastos = self.fm.obtener_gastos(filtros)
             self._aplicar_filtros()
-            
+
         except Exception as e:
-            logger.error(f"Error cargando datos de combustible: {e}", exc_info=True)
+            logger.error(f"GestorCombustible._cargar_datos: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Error al cargar datos:\n{e}")
-    
+
     def _aplicar_filtros(self):
-        """Aplica filtros y actualiza la vista"""
-        try:
-            equipo_id = self.combo_equipo_filtro.currentData()
-            
-            # Filtrar cargas
-            cargas_filtradas = self.cargas
-            
-            if equipo_id:
-                cargas_filtradas = [c for c in cargas_filtradas if str(c.get('equipo_id')) == equipo_id]
-            
-            # Actualizar estadísticas
-            self._actualizar_estadisticas(cargas_filtradas)
-            
-            # Actualizar tabla
-            self._actualizar_tabla(cargas_filtradas)
-            
-            # Actualizar gráfico
-            self._actualizar_grafico(cargas_filtradas)
-            
-        except Exception as e:
-            logger.error(f"Error aplicando filtros: {e}", exc_info=True)
-    
-    def _actualizar_estadisticas(self, cargas):
-        """Actualiza las estadísticas"""
-        if not cargas:
-            self.stat_total_litros.actualizar("0.00 L")
+        """Filtra por equipo y actualiza stats, tabla y gráfico."""
+        equipo_id = self.combo_equipo_filtro.currentData()
+        filtrados = self.gastos
+        if equipo_id:
+            filtrados = [g for g in filtrados if str(g.get('equipo_id', '')) == equipo_id]
+
+        self._actualizar_estadisticas(filtrados)
+        self._actualizar_tabla(filtrados)
+        self._actualizar_grafico(filtrados)
+
+    # ── Estadísticas ──────────────────────────────────────────────────────────
+    def _actualizar_estadisticas(self, gastos):
+        if not gastos:
+            self.stat_total_galones.actualizar("0.000 gal")
             self.stat_total_costo.actualizar(f"{self.moneda} 0.00")
-            self.stat_promedio_litro.actualizar(f"{self.moneda} 0.00")
-            self.stat_eficiencia.actualizar("0.00 L/h")
+            self.stat_precio_galon.actualizar(f"{self.moneda} 0.00")
+            self.stat_registros.actualizar("0")
             return
-        
-        total_litros = sum(float(c.get('litros', 0)) for c in cargas)
-        total_costo = sum(float(c.get('costo_total', 0)) for c in cargas)
-        precio_promedio = total_costo / total_litros if total_litros > 0 else 0
-        
-        # Calcular eficiencia (litros/hora)
-        cargas_con_horometro = [c for c in cargas if c.get('horometro_actual') and c.get('horometro_anterior')]
-        
-        if cargas_con_horometro:
-            eficiencias = []
-            for c in cargas_con_horometro:
-                horas = float(c.get('horometro_actual', 0)) - float(c.get('horometro_anterior', 0))
-                if horas > 0:
-                    eficiencia = float(c.get('litros', 0)) / horas
-                    eficiencias.append(eficiencia)
-            
-            eficiencia_promedio = sum(eficiencias) / len(eficiencias) if eficiencias else 0
-        else:
-            eficiencia_promedio = 0
-        
-        self.stat_total_litros.actualizar(f"{total_litros:,.2f} L")
+
+        total_galones = sum(float(g.get('galones') or 0) for g in gastos)
+        total_costo   = sum(float(g.get('monto')   or 0) for g in gastos)
+        precio_prom   = total_costo / total_galones if total_galones > 0 else 0
+
+        self.stat_total_galones.actualizar(f"{total_galones:,.3f} gal")
         self.stat_total_costo.actualizar(f"{self.moneda} {total_costo:,.2f}")
-        self.stat_promedio_litro.actualizar(f"{self.moneda} {precio_promedio:,.2f}")
-        self.stat_eficiencia.actualizar(f"{eficiencia_promedio:.2f} L/h")
-    
-    def _actualizar_tabla(self, cargas):
-        """Actualiza la tabla de cargas"""
+        self.stat_precio_galon.actualizar(f"{self.moneda} {precio_prom:,.2f}")
+        self.stat_registros.actualizar(str(len(gastos)))
+
+    # ── Tabla ─────────────────────────────────────────────────────────────────
+    def _actualizar_tabla(self, gastos):
         self.tabla.setRowCount(0)
-        
-        for carga in sorted(cargas, key=lambda x: x.get('fecha', ''), reverse=True):
+        for g in sorted(gastos, key=lambda x: x.get('fecha', ''), reverse=True):
             row = self.tabla.rowCount()
             self.tabla.insertRow(row)
-            
-            carga_id = str(carga.get('id', ''))
-            fecha = carga.get('fecha', '')
-            equipo_id = str(carga.get('equipo_id', ''))
-            equipo_nombre = self.equipos_mapa.get(equipo_id, f'ID: {equipo_id}')
-            litros = float(carga.get('litros', 0))
-            precio_litro = float(carga.get('precio_litro', 0))
-            costo_total = float(carga.get('costo_total', 0))
-            horometro = carga.get('horometro_actual', '-')
-            
-            # Calcular eficiencia
-            if carga.get('horometro_actual') and carga.get('horometro_anterior'):
-                horas = float(carga.get('horometro_actual', 0)) - float(carga.get('horometro_anterior', 0))
-                eficiencia = litros / horas if horas > 0 else 0
-                eficiencia_str = f"{eficiencia:.2f} L/h"
-            else:
-                eficiencia_str = "-"
-            
-            self.tabla.setItem(row, 0, QTableWidgetItem(carga_id))
+
+            gasto_id   = str(g.get('id', ''))
+            fecha      = g.get('fecha', '')
+            eq_id      = str(g.get('equipo_id', ''))
+            eq_nombre  = self.equipos_mapa.get(eq_id, f"ID:{eq_id}")
+            galones    = float(g.get('galones') or 0)
+            costo      = float(g.get('monto')   or 0)
+            precio_gal = costo / galones if galones > 0 else 0
+            descripcion = g.get('descripcion', '') or ''
+
+            self.tabla.setItem(row, 0, QTableWidgetItem(gasto_id))
             self.tabla.setItem(row, 1, QTableWidgetItem(fecha))
-            self.tabla.setItem(row, 2, QTableWidgetItem(equipo_nombre))
-            
-            item_litros = QTableWidgetItem(f"{litros:.2f} L")
-            item_litros.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.tabla.setItem(row, 3, item_litros)
-            
-            item_precio = QTableWidgetItem(f"{self.moneda} {precio_litro:.2f}")
-            item_precio.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.tabla.setItem(row, 4, item_precio)
-            
-            item_costo = QTableWidgetItem(f"{self.moneda} {costo_total:,.2f}")
-            item_costo.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.tabla.setItem(row, 5, item_costo)
-            
-            item_horometro = QTableWidgetItem(str(horometro))
-            item_horometro.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.tabla.setItem(row, 6, item_horometro)
-            
-            item_eficiencia = QTableWidgetItem(eficiencia_str)
-            item_eficiencia.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.tabla.setItem(row, 7, item_eficiencia)
-    
-    def _actualizar_grafico(self, cargas):
-        """Actualiza el gráfico de consumo"""
-        self.series_consumo.clear()
-        
-        if not cargas:
+            self.tabla.setItem(row, 2, QTableWidgetItem(eq_nombre))
+
+            def right_item(txt):
+                it = QTableWidgetItem(txt)
+                it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                return it
+
+            self.tabla.setItem(row, 3, right_item(f"{galones:,.3f}"))
+            self.tabla.setItem(row, 4, right_item(f"{self.moneda} {precio_gal:,.2f}"))
+            self.tabla.setItem(row, 5, right_item(f"{self.moneda} {costo:,.2f}"))
+            self.tabla.setItem(row, 6, QTableWidgetItem(descripcion))
+
+    # ── Gráfico ───────────────────────────────────────────────────────────────
+    def _actualizar_grafico(self, gastos):
+        self.series_galones.clear()
+        if not gastos:
+            # Ejes vacíos para que no quede rango extraño
+            self.axis_y.setRange(0, 1)
             return
-        
-        # Agrupar por fecha
-        consumo_por_fecha = {}
-        for carga in cargas:
-            fecha = carga.get('fecha', '')
-            litros = float(carga.get('litros', 0))
-            
-            if fecha in consumo_por_fecha:
-                consumo_por_fecha[fecha] += litros
-            else:
-                consumo_por_fecha[fecha] = litros
-        
-        # Ordenar y agregar al gráfico
-        for fecha, litros in sorted(consumo_por_fecha.items()):
+
+        por_fecha: dict[str, float] = {}
+        for g in gastos:
+            fecha   = g.get('fecha', '')
+            galones = float(g.get('galones') or 0)
+            if fecha:
+                por_fecha[fecha] = por_fecha.get(fecha, 0) + galones
+
+        if not por_fecha:
+            self.axis_y.setRange(0, 1)
+            return
+
+        puntos = []
+        for fecha, galones in sorted(por_fecha.items()):
             try:
                 dt = datetime.strptime(fecha, "%Y-%m-%d")
-                timestamp = dt.timestamp() * 1000  # Convertir a milisegundos
-                self.series_consumo.append(timestamp, litros)
-            except:
+                ms = int(dt.timestamp() * 1000)
+                puntos.append((ms, galones))
+                self.series_galones.append(ms, galones)
+            except Exception:
                 continue
-    
+
+        if not puntos:
+            return
+
+        # Actualizar rango del eje X (fechas)
+        from PyQt6.QtCore import QDateTime
+        min_ms = min(p[0] for p in puntos)
+        max_ms = max(p[0] for p in puntos)
+        # Si todos los puntos son el mismo día, añadir margen de ±1 día
+        if min_ms == max_ms:
+            min_ms -= 86_400_000
+            max_ms += 86_400_000
+        self.axis_x.setRange(
+            QDateTime.fromMSecsSinceEpoch(min_ms),
+            QDateTime.fromMSecsSinceEpoch(max_ms),
+        )
+
+        # Actualizar rango del eje Y (galones), con margen superior del 10 %
+        max_gal = max(p[1] for p in puntos)
+        self.axis_y.setRange(0, max_gal * 1.10 if max_gal > 0 else 1)
+
+    # ── Acciones ──────────────────────────────────────────────────────────────
     def _nueva_carga(self):
-        """Abre diálogo para nueva carga de combustible"""
-        dialog = DialogoCargaCombustible(self.fm, self.equipos_mapa, self.moneda, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        """Abre GastoDialog pre-seleccionando la categoría COMBUSTIBLE."""
+        from dialogos.gasto_dialog import GastoDialog
+        cat_id = self._resolver_cat_combustible_id()
+        dlg = GastoDialog(
+            firebase_manager=self.fm,
+            storage_manager=None,
+            equipos_mapa=self.equipos_mapa,
+            cuentas_mapa=self.cuentas_mapa,
+            categorias_mapa=self.categorias_mapa,
+            subcategorias_mapa=self.subcategorias_mapa,
+            gasto_id=None,
+            parent=self,
+            moneda_symbol=self.moneda,
+        )
+        # Pre-seleccionar categoría COMBUSTIBLE
+        if cat_id:
+            for i in range(dlg.combo_categoria.count()):
+                if str(dlg.combo_categoria.itemData(i)) == str(cat_id):
+                    dlg.combo_categoria.setCurrentIndex(i)
+                    break
+        if dlg.exec():
             self._cargar_datos()
-    
+
     def _editar_carga(self):
-        """Edita la carga seleccionada"""
+        """Abre GastoDialog para editar el gasto seleccionado."""
         current_row = self.tabla.currentRow()
         if current_row < 0:
-            QMessageBox.warning(self, "Sin Selección", "Debe seleccionar una carga.")
+            QMessageBox.warning(self, "Sin Selección", "Seleccione un registro primero.")
             return
-        
-        carga_id = self.tabla.item(current_row, 0).text()
-        carga = next((c for c in self.cargas if str(c.get('id')) == carga_id), None)
-        
-        if not carga:
-            QMessageBox.warning(self, "Error", "No se encontró la carga.")
-            return
-        
-        dialog = DialogoCargaCombustible(self.fm, self.equipos_mapa, self.moneda, carga=carga, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+
+        gasto_id = self.tabla.item(current_row, 0).text()
+        from dialogos.gasto_dialog import GastoDialog
+        dlg = GastoDialog(
+            firebase_manager=self.fm,
+            storage_manager=None,
+            equipos_mapa=self.equipos_mapa,
+            cuentas_mapa=self.cuentas_mapa,
+            categorias_mapa=self.categorias_mapa,
+            subcategorias_mapa=self.subcategorias_mapa,
+            gasto_id=gasto_id,
+            parent=self,
+            moneda_symbol=self.moneda,
+        )
+        if dlg.exec():
             self._cargar_datos()
-    
+
     def _eliminar_carga(self):
-        """Elimina la carga seleccionada"""
+        """Elimina el gasto de combustible seleccionado."""
         current_row = self.tabla.currentRow()
         if current_row < 0:
-            QMessageBox.warning(self, "Sin Selección", "Debe seleccionar una carga.")
+            QMessageBox.warning(self, "Sin Selección", "Seleccione un registro primero.")
             return
-        
-        carga_id = self.tabla.item(current_row, 0).text()
-        
-        respuesta = QMessageBox.question(
+
+        gasto_id = self.tabla.item(current_row, 0).text()
+        fecha    = self.tabla.item(current_row, 1).text()
+        equipo   = self.tabla.item(current_row, 2).text()
+
+        resp = QMessageBox.question(
             self,
             "Confirmar Eliminación",
-            "¿Está seguro de eliminar esta carga de combustible?\n\n"
+            f"¿Eliminar la carga de combustible?\n\n"
+            f"Fecha: {fecha}\nEquipo: {equipo}\n\n"
             "Esta acción no se puede deshacer.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
-        if respuesta == QMessageBox.StandardButton.Yes:
-            try:
-                if self.fm.eliminar_carga_combustible(carga_id):
-                    QMessageBox.information(self, "Éxito", "Carga eliminada correctamente.")
-                    self._cargar_datos()
-                else:
-                    QMessageBox.critical(self, "Error", "No se pudo eliminar la carga.")
-            except Exception as e:
-                logger.error(f"Error eliminando carga: {e}", exc_info=True)
-                QMessageBox.critical(self, "Error", f"Error al eliminar:\n{e}")
-    
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self.fm.eliminar_gasto(gasto_id)
+            QMessageBox.information(self, "Éxito", "Registro eliminado correctamente.")
+            self._cargar_datos()
+        except Exception as e:
+            logger.error(f"Error eliminando gasto {gasto_id}: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", f"No se pudo eliminar:\n{e}")
+
+    # ── Exportar Excel ────────────────────────────────────────────────────────
     def _exportar_excel(self):
-        """Exporta los datos a Excel"""
         try:
             from openpyxl import Workbook
             from openpyxl.styles import Font, Alignment, PatternFill
-            
-            archivo, _ = QFileDialog.getSaveFileName(
-                self,
-                "Guardar Reporte",
-                f"Combustible_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                "Excel (*.xlsx)"
+        except ImportError:
+            QMessageBox.critical(
+                self, "Error",
+                "Se requiere 'openpyxl' para exportar.\n\nInstale con: pip install openpyxl"
             )
-            
-            if not archivo:
-                return
-            
+            return
+
+        archivo, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar Reporte",
+            f"Combustible_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            "Excel (*.xlsx)"
+        )
+        if not archivo:
+            return
+
+        try:
+            equipo_id_filtro = self.combo_equipo_filtro.currentData()
+            datos = self.gastos
+            if equipo_id_filtro:
+                datos = [g for g in datos if str(g.get('equipo_id', '')) == equipo_id_filtro]
+
             wb = Workbook()
             ws = wb.active
-            ws.title = "Cargas Combustible"
-            
-            # Encabezados
-            headers = ["Fecha", "Equipo", "Litros", "Precio/L", "Costo Total", "Horómetro", "Eficiencia"]
-            for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col, value=header)
+            ws.title = "Combustible"
+
+            headers = ["Fecha", "Equipo", "Galones", "Precio/Gal", "Costo Total", "Descripción"]
+            for col, h in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=h)
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill(start_color="1F2937", end_color="1F2937", fill_type="solid")
                 cell.alignment = Alignment(horizontal="center")
-            
-            # Datos
-            equipo_id_filtro = self.combo_equipo_filtro.currentData()
-            cargas_filtradas = self.cargas
-            if equipo_id_filtro:
-                cargas_filtradas = [c for c in cargas_filtradas if str(c.get('equipo_id')) == equipo_id_filtro]
-            
-            for row, carga in enumerate(sorted(cargas_filtradas, key=lambda x: x.get('fecha', '')), 2):
-                equipo_id = str(carga.get('equipo_id', ''))
-                equipo_nombre = self.equipos_mapa.get(equipo_id, f'ID: {equipo_id}')
-                
-                horas = 0
-                if carga.get('horometro_actual') and carga.get('horometro_anterior'):
-                    horas = float(carga.get('horometro_actual', 0)) - float(carga.get('horometro_anterior', 0))
-                
-                litros = float(carga.get('litros', 0))
-                eficiencia = litros / horas if horas > 0 else 0
-                
-                ws.cell(row=row, column=1, value=carga.get('fecha', ''))
-                ws.cell(row=row, column=2, value=equipo_nombre)
-                ws.cell(row=row, column=3, value=litros)
-                ws.cell(row=row, column=4, value=float(carga.get('precio_litro', 0)))
-                ws.cell(row=row, column=5, value=float(carga.get('costo_total', 0)))
-                ws.cell(row=row, column=6, value=carga.get('horometro_actual', ''))
-                ws.cell(row=row, column=7, value=f"{eficiencia:.2f}" if eficiencia > 0 else "-")
-            
+
+            for row, g in enumerate(sorted(datos, key=lambda x: x.get('fecha', '')), 2):
+                eq_id    = str(g.get('equipo_id', ''))
+                galones  = float(g.get('galones') or 0)
+                costo    = float(g.get('monto')   or 0)
+                precio   = costo / galones if galones > 0 else 0
+                ws.cell(row=row, column=1, value=g.get('fecha', ''))
+                ws.cell(row=row, column=2, value=self.equipos_mapa.get(eq_id, f"ID:{eq_id}"))
+                ws.cell(row=row, column=3, value=round(galones, 3))
+                ws.cell(row=row, column=4, value=round(precio, 2))
+                ws.cell(row=row, column=5, value=round(costo, 2))
+                ws.cell(row=row, column=6, value=g.get('descripcion', '') or '')
+
             wb.save(archivo)
-            
-            QMessageBox.information(
-                self,
-                "Éxito",
-                f"Reporte exportado correctamente:\n{archivo}\n\n¿Desea abrirlo?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-        except ImportError:
-            QMessageBox.critical(
-                self,
-                "Error",
-                "Se requiere la librería 'openpyxl' para exportar a Excel.\n\n"
-                "Instálela con: pip install openpyxl"
-            )
+            QMessageBox.information(self, "Éxito", f"Reporte exportado:\n{archivo}")
+
         except Exception as e:
-            logger.error(f"Error exportando a Excel: {e}", exc_info=True)
+            logger.error(f"Error exportando Excel: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Error al exportar:\n{e}")
-
-
-class DialogoCargaCombustible(QDialog):
-    """Diálogo para agregar/editar carga de combustible"""
-    
-    def __init__(self, fm: FirebaseManager, equipos_mapa: dict, moneda: str, carga=None, parent=None):
-        super().__init__(parent)
-        self.fm = fm
-        self.equipos_mapa = equipos_mapa
-        self.moneda = moneda
-        self.carga = carga
-        
-        titulo = "Editar Carga" if carga else "Nueva Carga de Combustible"
-        self.setWindowTitle(titulo)
-        self.setMinimumWidth(500)
-        
-        self.setStyleSheet(COMBUSTIBLE_STYLE)
-        
-        self._init_ui()
-        
-        if carga:
-            self._cargar_datos()
-    
-    def _init_ui(self):
-        """Inicializa la interfaz"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(25, 25, 25, 25)
-        layout.setSpacing(20)
-        
-        # Título
-        titulo_texto = "Editar Carga de Combustible" if self.carga else "Nueva Carga de Combustible"
-        titulo = QLabel(titulo_texto)
-        titulo.setStyleSheet("font-size: 16pt; font-weight: bold; color: #1F2937;")
-        titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(titulo)
-        
-        # Formulario
-        form_layout = QFormLayout()
-        form_layout.setSpacing(15)
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        
-        # Fecha
-        lbl_fecha = QLabel("Fecha:")
-        lbl_fecha.setStyleSheet("font-weight: 600; color: #374151;")
-        self.fecha = QDateEdit(calendarPopup=True)
-        self.fecha.setDate(QDate.currentDate())
-        self.fecha.setDisplayFormat("yyyy-MM-dd")
-        form_layout.addRow(lbl_fecha, self.fecha)
-        
-        # Equipo
-        lbl_equipo = QLabel("Equipo:")
-        lbl_equipo.setStyleSheet("font-weight: 600; color: #374151;")
-        self.combo_equipo = QComboBox()
-        for eid, nombre in sorted(self.equipos_mapa.items(), key=lambda x: x[1]):
-            self.combo_equipo.addItem(nombre, eid)
-        form_layout.addRow(lbl_equipo, self.combo_equipo)
-        
-        # Litros
-        lbl_litros = QLabel("Litros:")
-        lbl_litros.setStyleSheet("font-weight: 600; color: #374151;")
-        self.spin_litros = QDoubleSpinBox()
-        self.spin_litros.setRange(0, 10000)
-        self.spin_litros.setDecimals(2)
-        self.spin_litros.setSuffix(" L")
-        self.spin_litros.valueChanged.connect(self._calcular_costo)
-        form_layout.addRow(lbl_litros, self.spin_litros)
-        
-        # Precio por litro
-        lbl_precio = QLabel("Precio/Litro:")
-        lbl_precio.setStyleSheet("font-weight: 600; color: #374151;")
-        self.spin_precio = QDoubleSpinBox()
-        self.spin_precio.setRange(0, 10000)
-        self.spin_precio.setDecimals(2)
-        self.spin_precio.setPrefix(f"{self.moneda} ")
-        self.spin_precio.valueChanged.connect(self._calcular_costo)
-        form_layout.addRow(lbl_precio, self.spin_precio)
-        
-        # Costo total (calculado)
-        lbl_costo = QLabel("Costo Total:")
-        lbl_costo.setStyleSheet("font-weight: 600; color: #374151;")
-        self.lbl_costo_total = QLabel(f"{self.moneda} 0.00")
-        self.lbl_costo_total.setStyleSheet("font-size: 14pt; font-weight: bold; color: #F59E0B;")
-        form_layout.addRow(lbl_costo, self.lbl_costo_total)
-        
-        # Horómetro anterior (opcional)
-        lbl_horometro_ant = QLabel("Horómetro Anterior:")
-        lbl_horometro_ant.setStyleSheet("font-weight: 600; color: #374151;")
-        self.spin_horometro_ant = QDoubleSpinBox()
-        self.spin_horometro_ant.setRange(0, 999999)
-        self.spin_horometro_ant.setDecimals(1)
-        self.spin_horometro_ant.setSuffix(" h")
-        self.spin_horometro_ant.setSpecialValueText("(Opcional)")
-        form_layout.addRow(lbl_horometro_ant, self.spin_horometro_ant)
-        
-        # Horómetro actual (opcional)
-        lbl_horometro_act = QLabel("Horómetro Actual:")
-        lbl_horometro_act.setStyleSheet("font-weight: 600; color: #374151;")
-        self.spin_horometro_act = QDoubleSpinBox()
-        self.spin_horometro_act.setRange(0, 999999)
-        self.spin_horometro_act.setDecimals(1)
-        self.spin_horometro_act.setSuffix(" h")
-        self.spin_horometro_act.setSpecialValueText("(Opcional)")
-        form_layout.addRow(lbl_horometro_act, self.spin_horometro_act)
-        
-        # Observaciones
-        lbl_obs = QLabel("Observaciones:")
-        lbl_obs.setStyleSheet("font-weight: 600; color: #374151;")
-        self.txt_observaciones = QTextEdit()
-        self.txt_observaciones.setMaximumHeight(80)
-        self.txt_observaciones.setPlaceholderText("Observaciones opcionales...")
-        form_layout.addRow(lbl_obs, self.txt_observaciones)
-        
-        layout.addLayout(form_layout)
-        
-        layout.addSpacing(10)
-        
-        # Botones
-        botones_layout = QHBoxLayout()
-        botones_layout.setSpacing(10)
-        
-        btn_guardar = QPushButton("💾 Guardar")
-        btn_guardar.clicked.connect(self._guardar)
-        btn_guardar.setMinimumWidth(120)
-        botones_layout.addWidget(btn_guardar)
-        
-        btn_cancelar = QPushButton("✖️ Cancelar")
-        btn_cancelar.setProperty("class", "secondary")
-        btn_cancelar.clicked.connect(self.reject)
-        btn_cancelar.setMinimumWidth(120)
-        botones_layout.addWidget(btn_cancelar)
-        
-        layout.addLayout(botones_layout)
-    
-    def _cargar_datos(self):
-        """Carga los datos de la carga a editar"""
-        if not self.carga:
-            return
-        
-        fecha_str = self.carga.get('fecha', '')
-        if fecha_str:
-            self.fecha.setDate(QDate.fromString(fecha_str, "yyyy-MM-dd"))
-        
-        equipo_id = str(self.carga.get('equipo_id', ''))
-        index = self.combo_equipo.findData(equipo_id)
-        if index >= 0:
-            self.combo_equipo.setCurrentIndex(index)
-        
-        self.spin_litros.setValue(float(self.carga.get('litros', 0)))
-        self.spin_precio.setValue(float(self.carga.get('precio_litro', 0)))
-        
-        if self.carga.get('horometro_anterior'):
-            self.spin_horometro_ant.setValue(float(self.carga.get('horometro_anterior', 0)))
-        
-        if self.carga.get('horometro_actual'):
-            self.spin_horometro_act.setValue(float(self.carga.get('horometro_actual', 0)))
-        
-        self.txt_observaciones.setPlainText(self.carga.get('observaciones', ''))
-    
-    def _calcular_costo(self):
-        """Calcula el costo total"""
-        litros = self.spin_litros.value()
-        precio = self.spin_precio.value()
-        costo_total = litros * precio
-        
-        self.lbl_costo_total.setText(f"{self.moneda} {costo_total:,.2f}")
-    
-    def _guardar(self):
-        """Guarda la carga de combustible"""
-        # Validaciones
-        if self.combo_equipo.currentIndex() < 0:
-            QMessageBox.warning(self, "Validación", "Debe seleccionar un equipo.")
-            return
-        
-        if self.spin_litros.value() <= 0:
-            QMessageBox.warning(self, "Validación", "Los litros deben ser mayor a cero.")
-            return
-        
-        if self.spin_precio.value() <= 0:
-            QMessageBox.warning(self, "Validación", "El precio debe ser mayor a cero.")
-            return
-        
-        # Validar horómetros
-        if self.spin_horometro_ant.value() > 0 and self.spin_horometro_act.value() > 0:
-            if self.spin_horometro_act.value() <= self.spin_horometro_ant.value():
-                QMessageBox.warning(
-                    self,
-                    "Validación",
-                    "El horómetro actual debe ser mayor al anterior."
-                )
-                return
-        
-        # Preparar datos
-        datos = {
-            'fecha': self.fecha.date().toString("yyyy-MM-dd"),
-            'equipo_id': self.combo_equipo.currentData(),
-            'litros': self.spin_litros.value(),
-            'precio_litro': self.spin_precio.value(),
-            'costo_total': self.spin_litros.value() * self.spin_precio.value(),
-            'observaciones': self.txt_observaciones.toPlainText().strip()
-        }
-        
-        if self.spin_horometro_ant.value() > 0:
-            datos['horometro_anterior'] = self.spin_horometro_ant.value()
-        
-        if self.spin_horometro_act.value() > 0:
-            datos['horometro_actual'] = self.spin_horometro_act.value()
-        
-        try:
-            if self.carga:
-                # Editar
-                if self.fm.editar_carga_combustible(self.carga['id'], datos):
-                    QMessageBox.information(self, "Éxito", "Carga actualizada correctamente.")
-                    self.accept()
-                else:
-                    QMessageBox.critical(self, "Error", "No se pudo actualizar la carga.")
-            else:
-                # Crear
-                nuevo_id = self.fm.agregar_carga_combustible(datos)
-                if nuevo_id:
-                    QMessageBox.information(self, "Éxito", "Carga registrada correctamente.")
-                    self.accept()
-                else:
-                    QMessageBox.critical(self, "Error", "No se pudo registrar la carga.")
-        
-        except Exception as e:
-            logger.error(f"Error guardando carga: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Error al guardar:\n{e}")

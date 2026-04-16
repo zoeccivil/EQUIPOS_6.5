@@ -1,8 +1,9 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QDateEdit, QLineEdit, QTextEdit, QPushButton, QFileDialog, QMessageBox
+    QDateEdit, QLineEdit, QTextEdit, QPushButton, QFileDialog, QMessageBox,
+    QGroupBox, QDoubleSpinBox
 )
-from PyQt6.QtCore import QDate
+from PyQt6.QtCore import QDate, Qt
 import os
 import logging
 
@@ -84,9 +85,50 @@ class GastoDialog(QDialog):
         self.txt_descripcion = QLineEdit()
         form.addRow("Descripción:", self.txt_descripcion)
 
-        # Monto
+        # ── Sección COMBUSTIBLE ─────────────────────────────────────────────
+        # Aparece antes del monto cuando la categoría es COMBUSTIBLE.
+        # El campo Galones es OBLIGATORIO: sin él no se puede guardar el gasto.
+        self.group_combustible = QGroupBox("Datos de Combustible")
+        self.group_combustible.setStyleSheet(
+            "QGroupBox { border: 2px solid #F59E0B; border-radius: 6px; "
+            "margin-top: 10px; padding: 10px; font-weight: bold; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; "
+            "padding: 0 4px; color: #F59E0B; }"
+        )
+        comb_form = QFormLayout(self.group_combustible)
+        comb_form.setSpacing(8)
+
+        # Etiqueta con indicador de campo obligatorio
+        lbl_galones = QLabel("Galones  <span style='color:red;font-weight:bold;'>*</span>")
+        lbl_galones.setTextFormat(Qt.TextFormat.RichText)
+
+        self.spin_galones = QDoubleSpinBox()
+        self.spin_galones.setDecimals(3)
+        self.spin_galones.setRange(0.0, 9999.999)
+        self.spin_galones.setValue(0.0)
+        self.spin_galones.setSuffix("  gal")
+        self.spin_galones.setSpecialValueText("")   # no muestra "0.000 gal" en blanco
+        self.spin_galones.valueChanged.connect(self._recalcular_combustible)
+        self.spin_galones.valueChanged.connect(self._actualizar_estilo_galones)
+        comb_form.addRow(lbl_galones, self.spin_galones)
+
+        self.lbl_precio_galon = QLabel(f"{self.moneda_symbol} 0.00 / gal")
+        self.lbl_precio_galon.setStyleSheet(
+            "font-weight: bold; color: #F59E0B; font-size: 11pt;"
+        )
+        comb_form.addRow("Precio/Galón calculado:", self.lbl_precio_galon)
+
+        lbl_aviso = QLabel("Ingrese los galones segun la factura antes de continuar.")
+        lbl_aviso.setStyleSheet("color: #6B7280; font-style: italic; font-size: 9pt;")
+        comb_form.addRow("", lbl_aviso)
+
+        self.group_combustible.setVisible(False)
+        form.addRow(self.group_combustible)
+
+        # Monto (va después de galones para que el flujo sea: galones → monto → precio calculado)
         self.txt_monto = QLineEdit()
         self.txt_monto.setPlaceholderText("Ej: 1500.00")
+        self.txt_monto.textChanged.connect(self._recalcular_combustible)
         form.addRow(f"Monto ({self.moneda_symbol}):", self.txt_monto)
 
         # Comentario (largo)
@@ -140,21 +182,44 @@ class GastoDialog(QDialog):
         self.combo_subcategoria.addItem("-- Seleccione --", None)
 
     def _filtrar_subcategorias(self):
-        """
-        Filtra subcategorías por la categoría seleccionada (si tu mapa lo permite).
-        Si el mapa no tiene agrupación por categoría, las muestra todas.
-        """
         seleccion_cat_id = self.combo_categoria.currentData()
         self.combo_subcategoria.blockSignals(True)
         self.combo_subcategoria.clear()
         self.combo_subcategoria.addItem("-- Seleccione --", None)
-
-        # Asumimos que subcategorias_mapa = {subcat_id: nombre}. No hay agrupación.
-        # Si en el futuro guardas relación categoría->subcategoría, aquí aplicas el filtro.
         for sub_id, nombre in sorted(self.subcategorias_mapa.items(), key=lambda x: x[1]):
             self.combo_subcategoria.addItem(nombre, sub_id)
-
         self.combo_subcategoria.blockSignals(False)
+
+        # Mostrar sección combustible si la categoría es COMBUSTIBLE
+        cat_nombre = self.categorias_mapa.get(str(seleccion_cat_id or ''), '').upper()
+        es_combustible = cat_nombre == 'COMBUSTIBLE'
+        self.group_combustible.setVisible(es_combustible)
+        if es_combustible:
+            self._actualizar_estilo_galones(self.spin_galones.value())
+            self.spin_galones.setFocus()
+
+    def _recalcular_combustible(self):
+        """Actualiza el precio por galón en tiempo real."""
+        if not self.group_combustible.isVisible():
+            return
+        try:
+            monto   = float(self.txt_monto.text().strip().replace(',', '') or 0)
+            galones = self.spin_galones.value()
+            precio  = monto / galones if galones > 0 else 0
+            self.lbl_precio_galon.setText(f"{self.moneda_symbol} {precio:,.2f} / gal")
+        except (ValueError, ZeroDivisionError):
+            self.lbl_precio_galon.setText(f"{self.moneda_symbol} 0.00 / gal")
+
+    def _actualizar_estilo_galones(self, valor):
+        """Resalta el spinbox en rojo si galones = 0, verde si está lleno."""
+        if valor <= 0:
+            self.spin_galones.setStyleSheet(
+                "QDoubleSpinBox { border: 2px solid #DC2626; border-radius: 4px; }"
+            )
+        else:
+            self.spin_galones.setStyleSheet(
+                "QDoubleSpinBox { border: 2px solid #16A34A; border-radius: 4px; }"
+            )
 
     def _load_data_into_form(self):
         g = self.gasto_actual
@@ -184,6 +249,14 @@ class GastoDialog(QDialog):
         self.txt_monto.setText(str(g.get("monto", "") or ""))
         self.txt_comentario.setText(g.get("comentario", "") or "")
 
+        # Cargar galones si existe (combustible)
+        galones = g.get("galones")
+        if galones:
+            try:
+                self.spin_galones.setValue(float(galones))
+            except (ValueError, TypeError):
+                pass
+
         if g.get("archivo_storage_path"):
             self.lbl_adjunto.setText(f"(adjunto existente) {g.get('archivo_storage_path')}")
 
@@ -204,6 +277,10 @@ class GastoDialog(QDialog):
             "monto": float(self.txt_monto.text().strip().replace(",", "")),
             "comentario": self.txt_comentario.toPlainText().strip(),
         }
+
+        # Guardar galones si es un gasto de combustible
+        if self.group_combustible.isVisible():
+            data["galones"] = self.spin_galones.value()
 
         try:
             if not self.gasto_id:
@@ -263,6 +340,15 @@ class GastoDialog(QDialog):
             float(self.txt_monto.text().strip().replace(",", ""))
         except Exception:
             errores.append("Monto inválido. Debe ser numérico.")
+
+        # Validar galones obligatorios cuando la categoría es COMBUSTIBLE
+        if self.group_combustible.isVisible():
+            if self.spin_galones.value() <= 0:
+                errores.append(
+                    "Debe ingresar la cantidad de galones.\n"
+                    "Este dato es obligatorio para gastos de COMBUSTIBLE.\n"
+                    "Verifique la factura del proveedor."
+                )
 
         return errores
 
