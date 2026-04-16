@@ -34,12 +34,14 @@ class EstadoCuentaDialog(QDialog):
     Ajusta según tus consultas reales en FirebaseManager.
     """
 
-    def __init__(self, firebase_manager, parent=None, currency_symbol: str = "RD$"):
+    def __init__(self, firebase_manager, parent=None, currency_symbol: str = "RD$",
+                 cliente_id: str = None):
         super().__init__(parent)
         self.setWindowTitle("Estado de Cuenta")
         self.setMinimumWidth(900)
         self.firebase_manager = firebase_manager
         self.currency_symbol = currency_symbol or "RD$"
+        self._preselect_cliente_id = str(cliente_id) if cliente_id else None
 
         # Mapas para mostrar nombres en preview
         self.clientes_mapa: Dict[str, str] = {}
@@ -49,6 +51,13 @@ class EstadoCuentaDialog(QDialog):
         self._build_ui()
         self._cargar_listas()
         self._conectar_eventos()
+
+        # Pre-seleccionar cliente si se proporcionó
+        if self._preselect_cliente_id:
+            for i in range(self.combo_cliente.count()):
+                if self.combo_cliente.itemData(i) == self._preselect_cliente_id:
+                    self.combo_cliente.setCurrentIndex(i)
+                    break
 
         # Selección inicial y preview
         self._ajustar_fechas_por_cliente()

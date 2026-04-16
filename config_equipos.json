@@ -18,8 +18,8 @@
     "formato_fecha": "yyyy-MM-dd"
   },
   "whatsapp": {
-    "greenapi_instance_id": "",
-    "greenapi_token": "",
+    "greenapi_instance_id": "7103515774",
+    "greenapi_token": "cf353e2c33934955b159fccad769f01afb674393c9d74d08a6",
     "telefono_contable": "",
     "provider": "twilio",
     "twilio_account_sid": "",

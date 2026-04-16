@@ -744,17 +744,27 @@ class CuentasPorCobrar(QWidget):
         msg.exec()
 
     def _generar_estado_cuenta(self):
-        """Abre el diálogo de Estado de Cuenta del sistema existente."""
-        cuenta = self._get_cuenta_seleccionada()
-        if not cuenta:
-            return
+        """Abre el diálogo de Estado de Cuenta. Pre-selecciona el cliente si hay fila seleccionada."""
+        # Intentar obtener cliente de la fila seleccionada (opcional)
+        cliente_id = None
+        row = self.tabla.currentRow()
+        if row >= 0:
+            alq_id = self.tabla.item(row, 0).text()
+            cuenta = next(
+                (c for c in self.cuentas if str(c['id']).startswith(alq_id)),
+                None,
+            )
+            if cuenta:
+                cliente_id = cuenta.get('cliente_id')
+
         try:
             from dialogos.estado_cuenta_dialog import EstadoCuentaDialog
+            moneda = self.config.get('app', {}).get('moneda', 'RD$')
             dlg = EstadoCuentaDialog(
-                fm=self.fm,
-                config=self.config,
-                cliente_id=cuenta['cliente_id'],
+                self.fm,
                 parent=self,
+                currency_symbol=moneda,
+                cliente_id=cliente_id,
             )
             dlg.exec()
         except Exception as e:
